@@ -99,9 +99,9 @@ function SetupRequired() {
         </div>
         <h1>Conectar o Supabase</h1>
         <p>
-          Crie um arquivo <code>.env.local</code> com <code>VITE_SUPABASE_URL</code> e{' '}
-          <code>VITE_SUPABASE_ANON_KEY</code>. O SQL de criação está em{' '}
-          <code>supabase/schema.sql</code>.
+          Configure na Vercel <code>NEXT_PUBLIC_SUPABASE_URL</code> e{' '}
+          <code>NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY</code>, ou use <code>VITE_SUPABASE_URL</code> e{' '}
+          <code>VITE_SUPABASE_ANON_KEY</code> localmente. O SQL de criação está em <code>supabase/schema.sql</code>.
         </p>
       </section>
     </main>
