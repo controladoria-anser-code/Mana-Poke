@@ -1,0 +1,64 @@
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Nunito:wght@700;800;900&family=Nunito+Sans:wght@400;500;600;700;800&display=swap');
+
+:root {
+  --teal: #1b4547;
+  --teal-mid: #2a6366;
+  --teal-light: #3d8287;
+  --teal-dim: #e6f0f0;
+  --coral: #e05535;
+  --coral-mid: #f07050;
+  --coral-dim: #fdf0ec;
+  --lime: #82b820;
+  --lime-dim: #f0f8e4;
+  --amber: #c07800;
+  --amber-dim: #fef7e6;
+  --danger: #c82020;
+  --danger-dim: #fdeeed;
+  --bg: #f5f2eb;
+  --surface: #ffffff;
+  --card: #fafaf6;
+  --border: #e2ddd5;
+  --border2: #c9c3b8;
+  --text: #192a2b;
+  --muted: #718689;
+  --sans: 'Nunito Sans', system-ui, sans-serif;
+  --heading: 'Nunito', system-ui, sans-serif;
+  --mono: 'IBM Plex Mono', ui-monospace, Consolas, monospace;
+  color: var(--text);
+  background: var(--bg);
+  font-family: var(--sans);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  background: var(--bg);
+}
+
+body {
+  min-width: 320px;
+  min-height: 100vh;
+  margin: 0;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+code {
+  padding: 2px 6px;
+  border-radius: 4px;
+  color: var(--teal);
+  background: var(--teal-dim);
+  font-family: var(--mono);
+  font-size: 0.9em;
+}
