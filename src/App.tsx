@@ -37,6 +37,7 @@ import {
   canDeleteBatch,
   canManageProteins,
   canManageUsers,
+  canViewCosts,
   roleLabel,
 } from './lib/permissions'
 
@@ -252,8 +253,8 @@ function Workspace({ session }: { session: Session }) {
     }
 
     const [proteinRows, batchRows, settingRows] = await Promise.all([
-      supabase.from('proteins').select('*').eq('active', true).order('name'),
-      supabase.from('batches').select('*').order('recorded_at', { ascending: false }),
+      supabase.from('proteins_for_current_user').select('*').eq('active', true).order('name'),
+      supabase.from('batches_for_current_user').select('*').order('recorded_at', { ascending: false }),
       supabase.from('app_settings').select('*'),
     ])
 
@@ -284,6 +285,7 @@ function Workspace({ session }: { session: Session }) {
   }, [loadWorkspace])
 
   const role = profile?.role ?? 'viewer'
+  const showCosts = canViewCosts(role)
   const alerts = useMemo(() => buildAlerts(proteins, batches, threshold), [batches, proteins, threshold])
   const today = useMemo(() => new Date(), [])
 
@@ -327,7 +329,7 @@ function Workspace({ session }: { session: Session }) {
       return
     }
 
-    if (patch.cost) {
+    if (patch.cost && canViewCosts(role)) {
       const affected = batches.filter((batch) => batch.protein_id === id)
       await Promise.all(
         affected.map((batch) =>
@@ -390,18 +392,22 @@ function Workspace({ session }: { session: Session }) {
     }
 
     const yieldPct = (net / gross) * 100
-    const realCost = protein.cost / (yieldPct / 100)
-    const { error } = await supabase.from('batches').insert({
+    const payload: Record<string, unknown> = {
       protein_id: protein.id,
       gross_kg: gross,
       net_kg: net,
       yield_pct: yieldPct,
-      real_cost_kg: realCost,
       shift: batchForm.shift,
       responsible: batchForm.responsible.trim() || null,
       notes: batchForm.notes.trim() || null,
       created_by: session.user.id,
-    })
+    }
+
+    if (canViewCosts(role) && protein.cost) {
+      payload.real_cost_kg = protein.cost / (yieldPct / 100)
+    }
+
+    const { error } = await supabase.from('batches').insert(payload)
 
     if (error) {
       setStatus(error.message)
@@ -456,7 +462,7 @@ function Workspace({ session }: { session: Session }) {
           {canCreateBatch(role) && (
             <button className="new-batch-btn" type="button" onClick={() => openBatchModal()}>
               <Plus size={18} />
-              Novo lote
+              Nova produção
             </button>
           )}
           <button className="icon-btn ghost" type="button" onClick={signOut} title="Sair">
@@ -503,6 +509,7 @@ function Workspace({ session }: { session: Session }) {
             onOpenBatch={openBatchModal}
             onUpdateProtein={updateProtein}
             proteins={proteins}
+            showCosts={showCosts}
           />
         )}
 
@@ -519,6 +526,7 @@ function Workspace({ session }: { session: Session }) {
             onThresholdChange={saveThreshold}
             onUpdateProtein={updateProtein}
             proteins={proteins}
+            showCosts={showCosts}
             threshold={threshold}
           />
         )}
@@ -535,6 +543,7 @@ function Workspace({ session }: { session: Session }) {
           onClose={() => setModalOpen(false)}
           onSubmit={createBatch}
           proteins={proteins}
+          showCosts={showCosts}
         />
       )}
     </div>
@@ -558,6 +567,7 @@ function ProductionTab({
   onOpenBatch,
   onUpdateProtein,
   proteins,
+  showCosts,
 }: {
   batches: Batch[]
   canDelete: boolean
@@ -566,6 +576,7 @@ function ProductionTab({
   onOpenBatch: (proteinId?: string) => void
   onUpdateProtein: (id: string, patch: Partial<Pick<Protein, 'cost' | 'target_yield' | 'active'>>) => void
   proteins: Protein[]
+  showCosts: boolean
 }) {
   return (
     <>
@@ -579,12 +590,19 @@ function ProductionTab({
             onOpenBatch={onOpenBatch}
             onUpdateProtein={onUpdateProtein}
             protein={protein}
+            showCosts={showCosts}
           />
         ))}
       </section>
 
       <div className="section-title">Histórico geral de lotes</div>
-      <LogTable batches={batches} canDelete={canDelete} onDeleteBatch={onDeleteBatch} proteins={proteins} />
+      <LogTable
+        batches={batches}
+        canDelete={canDelete}
+        onDeleteBatch={onDeleteBatch}
+        proteins={proteins}
+        showCosts={showCosts}
+      />
     </>
   )
 }
@@ -595,12 +613,14 @@ function ProteinCard({
   onOpenBatch,
   onUpdateProtein,
   protein,
+  showCosts,
 }: {
   batches: Batch[]
   canEdit: boolean
   onOpenBatch: (proteinId?: string) => void
   onUpdateProtein: (id: string, patch: Partial<Pick<Protein, 'cost' | 'target_yield' | 'active'>>) => void
   protein: Protein
+  showCosts: boolean
 }) {
   const rows = batchesForProtein(batches, protein.id)
   const avg = averageYield(batches, protein.id)
@@ -609,7 +629,7 @@ function ProteinCard({
   const producedToday = rows
     .filter((batch) => isSameDay(new Date(batch.recorded_at), new Date()))
     .reduce((sum, batch) => sum + batch.net_kg, 0)
-  const realCost = avg ? protein.cost / (avg / 100) : null
+  const realCost = showCosts && protein.cost && avg ? protein.cost / (avg / 100) : null
 
   return (
     <article className={`protein-card ${status}`}>
@@ -656,13 +676,17 @@ function ProteinCard({
 
         <footer className="card-footer">
           <div>
-            <span>Custo bruto {fmtBRL(protein.cost)}/kg</span>
-            <strong>Custo real {realCost ? `${fmtBRL(realCost)}/kg` : '-'}</strong>
+            {showCosts && (
+              <>
+                <span>Custo bruto {protein.cost ? `${fmtBRL(protein.cost)}/kg` : '-'}</span>
+                <strong>Custo real {realCost ? `${fmtBRL(realCost)}/kg` : '-'}</strong>
+              </>
+            )}
             {last && <small>Último lote: {new Date(last.recorded_at).toLocaleString('pt-BR')}</small>}
           </div>
           <button className="small-action" type="button" onClick={() => onOpenBatch(protein.id)}>
             <Plus size={15} />
-            Lote
+            Produção
           </button>
         </footer>
       </div>
@@ -684,13 +708,16 @@ function LogTable({
   canDelete,
   onDeleteBatch,
   proteins,
+  showCosts,
 }: {
   batches: Batch[]
   canDelete: boolean
   onDeleteBatch: (batchId: string) => void
   proteins: Protein[]
+  showCosts: boolean
 }) {
   const byId = new Map(proteins.map((protein) => [protein.id, protein]))
+  const columnCount = 7 + (showCosts ? 1 : 0) + (canDelete ? 1 : 0)
 
   return (
     <section className="table-shell">
@@ -702,7 +729,7 @@ function LogTable({
             <th>Bruto</th>
             <th>Líquido</th>
             <th>Rendimento</th>
-            <th>Custo real</th>
+            {showCosts && <th>Custo real</th>}
             <th>Turno</th>
             <th>Obs.</th>
             {canDelete && <th />}
@@ -711,7 +738,7 @@ function LogTable({
         <tbody>
           {batches.length === 0 && (
             <tr>
-              <td className="empty-state" colSpan={canDelete ? 9 : 8}>
+              <td className="empty-state" colSpan={columnCount}>
                 Nenhum lote registrado ainda.
               </td>
             </tr>
@@ -728,7 +755,7 @@ function LogTable({
                 <td>
                   <span className={`rend-cell ${status}`}>{fmtPct(batch.yield_pct)}</span>
                 </td>
-                <td>{fmtBRL(batch.real_cost_kg)}</td>
+                {showCosts && <td>{batch.real_cost_kg ? fmtBRL(batch.real_cost_kg) : '-'}</td>}
                 <td>{batch.shift}</td>
                 <td>{batch.notes || '-'}</td>
                 {canDelete && (
@@ -759,6 +786,7 @@ function AlertsTab({
   onThresholdChange,
   onUpdateProtein,
   proteins,
+  showCosts,
   threshold,
 }: {
   alerts: ReturnType<typeof buildAlerts>
@@ -772,6 +800,7 @@ function AlertsTab({
   onThresholdChange: (value: number) => void
   onUpdateProtein: (id: string, patch: Partial<Pick<Protein, 'cost' | 'target_yield' | 'active'>>) => void
   proteins: Protein[]
+  showCosts: boolean
   threshold: number
 }) {
   return (
@@ -806,7 +835,7 @@ function AlertsTab({
                 <p>{alert.desc}</p>
                 <button type="button" onClick={() => onOpenBatch(alert.proteinId)}>
                   <Plus size={14} />
-                  Registrar lote
+                  Registrar produção
                 </button>
               </div>
             </article>
@@ -825,8 +854,8 @@ function AlertsTab({
                 <th>Dias</th>
                 <th>Rend. médio</th>
                 <th>Meta</th>
-                <th>Custo bruto</th>
-                <th>Custo real</th>
+                {showCosts && <th>Custo bruto</th>}
+                {showCosts && <th>Custo real</th>}
                 <th>Status</th>
                 <th />
               </tr>
@@ -837,7 +866,7 @@ function AlertsTab({
                 const last = lastBatch(batches, protein.id)
                 const days = daysSince(last?.recorded_at)
                 const status = rendStatus(avg, protein.target_yield)
-                const realCost = avg ? protein.cost / (avg / 100) : null
+                const realCost = showCosts && protein.cost && avg ? protein.cost / (avg / 100) : null
 
                 return (
                   <tr key={protein.id}>
@@ -856,22 +885,24 @@ function AlertsTab({
                         defaultValue={protein.target_yield}
                       />
                     </td>
-                    <td>
-                      <input
-                        className="table-input"
-                        disabled={!canEdit}
-                        onBlur={(event) => onUpdateProtein(protein.id, { cost: Number(event.target.value) })}
-                        type="number"
-                        step="0.01"
-                        defaultValue={protein.cost}
-                      />
-                    </td>
-                    <td>{realCost ? fmtBRL(realCost) : '-'}</td>
+                    {showCosts && (
+                      <td>
+                        <input
+                          className="table-input"
+                          disabled={!canEdit}
+                          onBlur={(event) => onUpdateProtein(protein.id, { cost: Number(event.target.value) })}
+                          type="number"
+                          step="0.01"
+                          defaultValue={protein.cost ?? ''}
+                        />
+                      </td>
+                    )}
+                    {showCosts && <td>{realCost ? fmtBRL(realCost) : '-'}</td>}
                     <td>
                       <span className={`status-pill ${status}`}>{statusLabel(status)}</span>
                     </td>
                     <td className="row-actions">
-                      <button className="icon-btn" type="button" onClick={() => onOpenBatch(protein.id)} title="Novo lote">
+                      <button className="icon-btn" type="button" onClick={() => onOpenBatch(protein.id)} title="Nova produção">
                         <Plus size={15} />
                       </button>
                       {canEdit && (
@@ -946,7 +977,7 @@ function AccessTab({
           <Save size={16} /> Operador registra lotes.
         </span>
         <span>
-          <Eye size={16} /> Leitura apenas consulta.
+          <Eye size={16} /> Leitor apenas consulta.
         </span>
       </div>
       <section className="table-shell">
@@ -993,26 +1024,34 @@ function BatchModal({
   onClose,
   onSubmit,
   proteins,
+  showCosts,
 }: {
   form: BatchForm
   onChange: (form: BatchForm) => void
   onClose: () => void
   onSubmit: (event: FormEvent) => void
   proteins: Protein[]
+  showCosts: boolean
 }) {
   const protein = proteins.find((item) => item.id === form.proteinId)
   const gross = Number(form.grossKg)
   const net = Number(form.netKg)
   const yieldPct = gross > 0 && net > 0 && net <= gross ? (net / gross) * 100 : null
-  const realCost = protein && yieldPct ? protein.cost / (yieldPct / 100) : null
+  const realCost = showCosts && protein?.cost && yieldPct ? protein.cost / (yieldPct / 100) : null
 
   return (
     <div className="overlay" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <form className="modal" onSubmit={onSubmit}>
         <header className="modal-header">
           <div>
-            <h2>Novo lote</h2>
-            <span>{protein ? `${protein.name} · ${fmtBRL(protein.cost)}/kg bruto` : 'Selecione a proteína'}</span>
+            <h2>Nova produção</h2>
+            <span>
+              {protein
+                ? showCosts && protein.cost
+                  ? `${protein.name} · ${fmtBRL(protein.cost)}/kg bruto`
+                  : protein.name
+                : 'Selecione a proteína'}
+            </span>
           </div>
           <button className="icon-btn ghost" type="button" onClick={onClose} title="Fechar">
             <X size={18} />
@@ -1060,7 +1099,7 @@ function BatchModal({
           <div className="live-calc">
             <MiniMetric label="Rendimento" value={fmtPct(yieldPct)} tone={rendStatus(yieldPct, protein?.target_yield ?? 80)} />
             <MiniMetric label="Perda" value={yieldPct ? fmtKg(gross - net) : '-'} />
-            <MiniMetric label="Custo real" value={realCost ? fmtBRL(realCost) : '-'} />
+            {showCosts && <MiniMetric label="Custo real" value={realCost ? fmtBRL(realCost) : '-'} />}
           </div>
 
           <div className="form-grid two">
@@ -1069,7 +1108,6 @@ function BatchModal({
               <select value={form.shift} onChange={(event) => onChange({ ...form, shift: event.target.value as Batch['shift'] })}>
                 <option value="manha">Manhã</option>
                 <option value="tarde">Tarde</option>
-                <option value="noite">Noite</option>
               </select>
             </label>
             <label>
@@ -1090,7 +1128,7 @@ function BatchModal({
           </button>
           <button className="primary-btn" type="submit">
             <Save size={18} />
-            Salvar lote
+            Salvar produção
           </button>
         </footer>
       </form>

@@ -19,6 +19,10 @@ export function canManageProteins(role: Role) {
   return roleRank[role] >= roleRank.gestor
 }
 
+export function canViewCosts(role: Role) {
+  return roleRank[role] >= roleRank.gestor
+}
+
 export function canManageUsers(role: Role) {
   return role === 'admin'
 }
@@ -28,7 +32,7 @@ export function roleLabel(role: Role) {
     admin: 'Admin',
     gestor: 'Gestor',
     operador: 'Operador',
-    viewer: 'Leitura',
+    viewer: 'Leitor',
   }
 
   return labels[role]

@@ -12,7 +12,7 @@ export type Protein = {
   id: string
   slug: string
   name: string
-  cost: number
+  cost: number | null
   target_yield: number
   active: boolean
   created_at: string
@@ -24,8 +24,8 @@ export type Batch = {
   gross_kg: number
   net_kg: number
   yield_pct: number
-  real_cost_kg: number
-  shift: 'manha' | 'tarde' | 'noite'
+  real_cost_kg: number | null
+  shift: 'manha' | 'tarde'
   responsible: string | null
   notes: string | null
   recorded_at: string
