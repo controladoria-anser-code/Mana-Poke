@@ -12,8 +12,8 @@ export function fmtPct(value: number | null | undefined) {
   return value === null || value === undefined ? '-' : `${value.toFixed(1)}%`
 }
 
-export function rendStatus(rend: number | null | undefined, target: number) {
-  if (rend === null || rend === undefined) return 'virgin'
+export function rendStatus(rend: number | null | undefined, target: number | null | undefined) {
+  if (rend === null || rend === undefined || target === null || target === undefined) return 'virgin'
   if (rend >= target) return 'ok'
   if (rend >= target * 0.93) return 'warn'
   return 'danger'
@@ -59,7 +59,7 @@ export function daysSince(dateIso?: string) {
   return Math.floor((today.getTime() - then.getTime()) / 86_400_000)
 }
 
-export function buildAlerts(proteins: Protein[], batches: Batch[], thresholdDays: number) {
+export function buildAlerts(proteins: Protein[], batches: Batch[], thresholdDays: number, includeTargetAlerts = true) {
   return proteins.flatMap((protein) => {
     const alerts: Array<{ severity: 'danger' | 'warn'; title: string; desc: string; proteinId: string }> = []
     const avg = averageYield(batches, protein.id)
@@ -82,7 +82,7 @@ export function buildAlerts(proteins: Protein[], batches: Batch[], thresholdDays
       })
     }
 
-    if (avg !== null && avg < protein.target_yield) {
+    if (includeTargetAlerts && avg !== null && protein.target_yield !== null && avg < protein.target_yield) {
       const delta = avg - protein.target_yield
       alerts.push({
         severity: delta < -(protein.target_yield * 0.07) ? 'danger' : 'warn',

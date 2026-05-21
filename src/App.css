@@ -551,6 +551,10 @@ select:disabled {
   margin-bottom: 15px;
 }
 
+.metrics-grid.two {
+  grid-template-columns: repeat(2, 1fr);
+}
+
 .mini-metric {
   min-width: 0;
   padding: 10px 11px;
@@ -948,6 +952,10 @@ tr:last-child td {
   padding: 14px;
   background: var(--teal);
   border-radius: 8px;
+}
+
+.live-calc.two {
+  grid-template-columns: repeat(2, 1fr);
 }
 
 .live-calc .mini-metric {

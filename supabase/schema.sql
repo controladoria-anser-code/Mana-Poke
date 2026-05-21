@@ -63,6 +63,16 @@ as $$
   select coalesce(public.current_user_role() in ('admin', 'gestor'), false)
 $$;
 
+create or replace function public.current_user_can_view_targets()
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select coalesce(public.current_user_role() in ('admin', 'gestor'), false)
+$$;
+
 create or replace function public.handle_new_user()
 returns trigger
 language plpgsql
@@ -237,7 +247,10 @@ select
     when public.current_user_can_view_costs() then cost
     else null::numeric(10, 2)
   end as cost,
-  target_yield,
+  case
+    when public.current_user_can_view_targets() then target_yield
+    else null::numeric(5, 2)
+  end as target_yield,
   active,
   created_at
 from public.proteins;
@@ -263,7 +276,7 @@ from public.batches;
 revoke select on public.proteins from anon, authenticated;
 revoke select on public.batches from anon, authenticated;
 
-grant select (id, slug, name, target_yield, active, created_at) on public.proteins to authenticated;
+grant select (id, slug, name, active, created_at) on public.proteins to authenticated;
 grant select (id, protein_id, gross_kg, net_kg, yield_pct, shift, responsible, notes, recorded_at, created_by)
   on public.batches to authenticated;
 grant select on public.proteins_for_current_user to authenticated;

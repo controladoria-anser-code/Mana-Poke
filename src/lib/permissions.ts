@@ -23,6 +23,10 @@ export function canViewCosts(role: Role) {
   return roleRank[role] >= roleRank.gestor
 }
 
+export function canViewTargets(role: Role) {
+  return roleRank[role] >= roleRank.gestor
+}
+
 export function canManageUsers(role: Role) {
   return role === 'admin'
 }

@@ -39,6 +39,7 @@ import {
   canManageProteins,
   canManageUsers,
   canViewCosts,
+  canViewTargets,
   roleLabel,
 } from './lib/permissions'
 
@@ -301,7 +302,8 @@ function Workspace({ session }: { session: Session }) {
 
   const role = profile?.role ?? 'viewer'
   const showCosts = canViewCosts(role)
-  const alerts = useMemo(() => buildAlerts(proteins, batches, threshold), [batches, proteins, threshold])
+  const showTargets = canViewTargets(role)
+  const alerts = useMemo(() => buildAlerts(proteins, batches, threshold, showTargets), [batches, proteins, showTargets, threshold])
   const today = useMemo(() => new Date(), [])
 
   const summary = useMemo(() => {
@@ -311,12 +313,15 @@ function Workspace({ session }: { session: Session }) {
       .filter((item): item is { protein: Protein; avg: number } => item.avg !== null)
 
     const average = averages.length ? averages.reduce((sum, item) => sum + item.avg, 0) / averages.length : null
-    const above = averages.filter((item) => item.avg >= item.protein.target_yield).length
-    const below = averages.filter((item) => item.avg < item.protein.target_yield).length
+    const targetAverages = averages
+      .map((item) => ({ ...item, target: item.protein.target_yield }))
+      .filter((item): item is { protein: Protein; avg: number; target: number } => item.target !== null)
+    const above = showTargets ? targetAverages.filter((item) => item.avg >= item.target).length : 0
+    const below = showTargets ? targetAverages.filter((item) => item.avg < item.target).length : 0
     const totalNet = todayBatches.reduce((sum, batch) => sum + batch.net_kg, 0)
 
     return { todayCount: todayBatches.length, average, above, below, totalNet }
-  }, [batches, proteins, today])
+  }, [batches, proteins, showTargets, today])
 
   function openBatchModal(proteinId = '') {
     setBatchForm({ ...emptyBatchForm, proteinId })
@@ -543,8 +548,8 @@ function Workspace({ session }: { session: Session }) {
       <section className="summary-strip">
         <Metric label="Lotes hoje" value={String(summary.todayCount)} tone="accent" />
         <Metric label="Rendimento médio" value={fmtPct(summary.average)} />
-        <Metric label="Acima da meta" value={String(summary.above)} tone="ok" />
-        <Metric label="Abaixo da meta" value={String(summary.below)} tone="warn" />
+        {showTargets && <Metric label="Acima da meta" value={String(summary.above)} tone="ok" />}
+        {showTargets && <Metric label="Abaixo da meta" value={String(summary.below)} tone="warn" />}
         <Metric label="Kg produzidos hoje" value={summary.totalNet.toFixed(3)} tone="accent" />
       </section>
 
@@ -579,6 +584,7 @@ function Workspace({ session }: { session: Session }) {
             onUpdateProtein={updateProtein}
             proteins={proteins}
             showCosts={showCosts}
+            showTargets={showTargets}
           />
         )}
 
@@ -596,6 +602,7 @@ function Workspace({ session }: { session: Session }) {
             onUpdateProtein={updateProtein}
             proteins={proteins}
             showCosts={showCosts}
+            showTargets={showTargets}
             threshold={threshold}
           />
         )}
@@ -613,6 +620,7 @@ function Workspace({ session }: { session: Session }) {
           onSubmit={createBatch}
           proteins={proteins}
           showCosts={showCosts}
+          showTargets={showTargets}
         />
       )}
     </div>
@@ -637,6 +645,7 @@ function ProductionTab({
   onUpdateProtein,
   proteins,
   showCosts,
+  showTargets,
 }: {
   batches: Batch[]
   canDelete: boolean
@@ -646,6 +655,7 @@ function ProductionTab({
   onUpdateProtein: (id: string, patch: Partial<Pick<Protein, 'cost' | 'target_yield' | 'active'>>) => void
   proteins: Protein[]
   showCosts: boolean
+  showTargets: boolean
 }) {
   return (
     <>
@@ -660,6 +670,7 @@ function ProductionTab({
             onUpdateProtein={onUpdateProtein}
             protein={protein}
             showCosts={showCosts}
+            showTargets={showTargets}
           />
         ))}
       </section>
@@ -671,6 +682,7 @@ function ProductionTab({
         onDeleteBatch={onDeleteBatch}
         proteins={proteins}
         showCosts={showCosts}
+        showTargets={showTargets}
       />
     </>
   )
@@ -683,6 +695,7 @@ function ProteinCard({
   onUpdateProtein,
   protein,
   showCosts,
+  showTargets,
 }: {
   batches: Batch[]
   canEdit: boolean
@@ -690,11 +703,12 @@ function ProteinCard({
   onUpdateProtein: (id: string, patch: Partial<Pick<Protein, 'cost' | 'target_yield' | 'active'>>) => void
   protein: Protein
   showCosts: boolean
+  showTargets: boolean
 }) {
   const rows = batchesForProtein(batches, protein.id)
   const avg = averageYield(batches, protein.id)
   const last = lastBatch(batches, protein.id)
-  const status = rendStatus(avg, protein.target_yield)
+  const status = showTargets ? rendStatus(avg, protein.target_yield) : 'virgin'
   const producedToday = rows
     .filter((batch) => isSameDay(new Date(batch.recorded_at), new Date()))
     .reduce((sum, batch) => sum + batch.net_kg, 0)
@@ -709,39 +723,43 @@ function ProteinCard({
             <h2>{protein.name}</h2>
             <span>{rows.length} lote{rows.length === 1 ? '' : 's'} registrado{rows.length === 1 ? '' : 's'}</span>
           </div>
-          <span className={`status-pill ${status}`}>{statusLabel(status)}</span>
+          {showTargets && <span className={`status-pill ${status}`}>{statusLabel(status)}</span>}
         </div>
 
-        <div className="metrics-grid">
+        <div className={`metrics-grid ${showTargets ? '' : 'two'}`}>
           <MiniMetric label="Média" value={fmtPct(avg)} tone={status} />
-          <MiniMetric label="Meta" value={fmtPct(protein.target_yield)} />
+          {showTargets && <MiniMetric label="Meta" value={fmtPct(protein.target_yield)} />}
           <MiniMetric label="Hoje" value={fmtKg(producedToday)} />
         </div>
 
         <div className="gauge">
           <div className="gauge-labels">
             <span>0%</span>
-            <span>Meta {fmtPct(protein.target_yield)}</span>
+            {showTargets && <span>Meta {fmtPct(protein.target_yield)}</span>}
             <span>100%</span>
           </div>
           <div className="gauge-track">
             <div className={`gauge-fill ${status}`} style={{ width: `${Math.min(avg ?? 0, 100)}%` }} />
-            <div className="gauge-target" style={{ left: `${Math.min(protein.target_yield, 100)}%` }} />
+            {showTargets && protein.target_yield !== null && (
+              <div className="gauge-target" style={{ left: `${Math.min(protein.target_yield, 100)}%` }} />
+            )}
           </div>
         </div>
 
-        <div className="target-row">
-          <span>Meta de rendimento</span>
-          <input
-            disabled={!canEdit}
-            max={100}
-            min={1}
-            onBlur={(event) => onUpdateProtein(protein.id, { target_yield: Number(event.target.value) })}
-            type="number"
-            defaultValue={protein.target_yield}
-          />
-          <span>%</span>
-        </div>
+        {showTargets && (
+          <div className="target-row">
+            <span>Meta de rendimento</span>
+            <input
+              disabled={!canEdit}
+              max={100}
+              min={1}
+              onBlur={(event) => onUpdateProtein(protein.id, { target_yield: Number(event.target.value) })}
+              type="number"
+              defaultValue={protein.target_yield ?? ''}
+            />
+            <span>%</span>
+          </div>
+        )}
 
         <footer className="card-footer">
           <div>
@@ -778,12 +796,14 @@ function LogTable({
   onDeleteBatch,
   proteins,
   showCosts,
+  showTargets,
 }: {
   batches: Batch[]
   canDelete: boolean
   onDeleteBatch: (batchId: string) => void
   proteins: Protein[]
   showCosts: boolean
+  showTargets: boolean
 }) {
   const byId = new Map(proteins.map((protein) => [protein.id, protein]))
   const columnCount = 7 + (showCosts ? 1 : 0) + (canDelete ? 1 : 0)
@@ -814,7 +834,7 @@ function LogTable({
           )}
           {batches.map((batch) => {
             const protein = byId.get(batch.protein_id)
-            const status = rendStatus(batch.yield_pct, protein?.target_yield ?? 80)
+            const status = showTargets ? rendStatus(batch.yield_pct, protein?.target_yield) : 'virgin'
             return (
               <tr key={batch.id}>
                 <td>{new Date(batch.recorded_at).toLocaleString('pt-BR')}</td>
@@ -856,6 +876,7 @@ function AlertsTab({
   onUpdateProtein,
   proteins,
   showCosts,
+  showTargets,
   threshold,
 }: {
   alerts: ReturnType<typeof buildAlerts>
@@ -870,6 +891,7 @@ function AlertsTab({
   onUpdateProtein: (id: string, patch: Partial<Pick<Protein, 'cost' | 'target_yield' | 'active'>>) => void
   proteins: Protein[]
   showCosts: boolean
+  showTargets: boolean
   threshold: number
 }) {
   return (
@@ -922,10 +944,10 @@ function AlertsTab({
                 <th>Último lote</th>
                 <th>Dias</th>
                 <th>Rend. médio</th>
-                <th>Meta</th>
+                {showTargets && <th>Meta</th>}
                 {showCosts && <th>Custo bruto</th>}
                 {showCosts && <th>Custo real</th>}
-                <th>Status</th>
+                {showTargets && <th>Status</th>}
                 <th />
               </tr>
             </thead>
@@ -934,7 +956,7 @@ function AlertsTab({
                 const avg = averageYield(batches, protein.id)
                 const last = lastBatch(batches, protein.id)
                 const days = daysSince(last?.recorded_at)
-                const status = rendStatus(avg, protein.target_yield)
+                const status = showTargets ? rendStatus(avg, protein.target_yield) : 'virgin'
                 const realCost = showCosts && protein.cost && avg ? protein.cost / (avg / 100) : null
 
                 return (
@@ -945,15 +967,17 @@ function AlertsTab({
                     <td>
                       <span className={`rend-cell ${status}`}>{fmtPct(avg)}</span>
                     </td>
-                    <td>
-                      <input
-                        className="table-input"
-                        disabled={!canEdit}
-                        onBlur={(event) => onUpdateProtein(protein.id, { target_yield: Number(event.target.value) })}
-                        type="number"
-                        defaultValue={protein.target_yield}
-                      />
-                    </td>
+                    {showTargets && (
+                      <td>
+                        <input
+                          className="table-input"
+                          disabled={!canEdit}
+                          onBlur={(event) => onUpdateProtein(protein.id, { target_yield: Number(event.target.value) })}
+                          type="number"
+                          defaultValue={protein.target_yield ?? ''}
+                        />
+                      </td>
+                    )}
                     {showCosts && (
                       <td>
                         <input
@@ -967,9 +991,11 @@ function AlertsTab({
                       </td>
                     )}
                     {showCosts && <td>{realCost ? fmtBRL(realCost) : '-'}</td>}
-                    <td>
-                      <span className={`status-pill ${status}`}>{statusLabel(status)}</span>
-                    </td>
+                    {showTargets && (
+                      <td>
+                        <span className={`status-pill ${status}`}>{statusLabel(status)}</span>
+                      </td>
+                    )}
                     <td className="row-actions">
                       <button className="icon-btn" type="button" onClick={() => onOpenBatch(protein.id)} title="Nova produção">
                         <Plus size={15} />
@@ -1159,6 +1185,7 @@ function BatchModal({
   onSubmit,
   proteins,
   showCosts,
+  showTargets,
 }: {
   form: BatchForm
   onChange: (form: BatchForm) => void
@@ -1166,6 +1193,7 @@ function BatchModal({
   onSubmit: (event: FormEvent) => void
   proteins: Protein[]
   showCosts: boolean
+  showTargets: boolean
 }) {
   const protein = proteins.find((item) => item.id === form.proteinId)
   const gross = Number(form.grossKg)
@@ -1230,8 +1258,12 @@ function BatchModal({
             </label>
           </div>
 
-          <div className="live-calc">
-            <MiniMetric label="Rendimento" value={fmtPct(yieldPct)} tone={rendStatus(yieldPct, protein?.target_yield ?? 80)} />
+          <div className={`live-calc ${showCosts ? '' : 'two'}`}>
+            <MiniMetric
+              label="Rendimento"
+              value={fmtPct(yieldPct)}
+              tone={showTargets ? rendStatus(yieldPct, protein?.target_yield) : 'virgin'}
+            />
             <MiniMetric label="Perda" value={yieldPct ? fmtKg(gross - net) : '-'} />
             {showCosts && <MiniMetric label="Custo real" value={realCost ? fmtBRL(realCost) : '-'} />}
           </div>

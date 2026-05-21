@@ -13,7 +13,7 @@ export type Protein = {
   slug: string
   name: string
   cost: number | null
-  target_yield: number
+  target_yield: number | null
   active: boolean
   created_at: string
 }
