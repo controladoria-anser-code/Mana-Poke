@@ -12,12 +12,13 @@ import {
   Save,
   Shield,
   Trash2,
+  UserPlus,
   Users,
   X,
 } from 'lucide-react'
 import type { Session } from '@supabase/supabase-js'
 import './App.css'
-import { supabase, isSupabaseConfigured } from './lib/supabase'
+import { createIsolatedSupabaseClient, supabase, isSupabaseConfigured } from './lib/supabase'
 import type { AppSetting, Batch, Profile, Protein, Role } from './types'
 import {
   averageYield,
@@ -52,6 +53,13 @@ type BatchForm = {
   notes: string
 }
 
+type NewUserForm = {
+  fullName: string
+  email: string
+  password: string
+  role: Role
+}
+
 const emptyBatchForm: BatchForm = {
   proteinId: '',
   grossKg: '',
@@ -59,6 +67,13 @@ const emptyBatchForm: BatchForm = {
   shift: 'manha',
   responsible: '',
   notes: '',
+}
+
+const emptyNewUserForm: NewUserForm = {
+  fullName: '',
+  email: '',
+  password: '',
+  role: 'operador',
 }
 
 const roles: Role[] = ['admin', 'gestor', 'operador', 'viewer']
@@ -439,6 +454,60 @@ function Workspace({ session }: { session: Session }) {
     await loadWorkspace()
   }
 
+  async function createUser(newUser: NewUserForm) {
+    if (!supabase || !canManageUsers(role)) return false
+    const authClient = createIsolatedSupabaseClient()
+    const email = newUser.email.trim().toLowerCase()
+    const fullName = newUser.fullName.trim()
+
+    if (!authClient) {
+      setStatus('Supabase não configurado.')
+      return false
+    }
+
+    if (!email || newUser.password.length < 6) {
+      setStatus('Informe e-mail e uma senha com pelo menos 6 caracteres.')
+      return false
+    }
+
+    setStatus('')
+
+    const { data, error } = await authClient.auth.signUp({
+      email,
+      password: newUser.password,
+      options: {
+        data: { full_name: fullName || null },
+      },
+    })
+
+    await authClient.auth.signOut()
+
+    if (error) {
+      setStatus(error.message)
+      return false
+    }
+
+    if (!data.user) {
+      setStatus('Não foi possível criar o usuário.')
+      return false
+    }
+
+    const { error: profileError } = await supabase
+      .from('profiles')
+      .update({ full_name: fullName || null, role: newUser.role })
+      .eq('id', data.user.id)
+
+    if (profileError) {
+      setStatus(`Usuário criado, mas não foi possível ajustar o nível: ${profileError.message}`)
+      await loadWorkspace()
+      return false
+    }
+
+    setStatus('Usuário cadastrado com sucesso.')
+    await loadWorkspace()
+    return true
+  }
+
   if (loading || !profile) return <Splash text="Sincronizando dados..." />
 
   return (
@@ -532,7 +601,7 @@ function Workspace({ session }: { session: Session }) {
         )}
 
         {tab === 'acessos' && canManageUsers(role) && (
-          <AccessTab currentUserId={profile.id} onUpdateRole={updateRole} profiles={profiles} />
+          <AccessTab currentUserId={profile.id} onCreateUser={createUser} onUpdateRole={updateRole} profiles={profiles} />
         )}
       </main>
 
@@ -956,13 +1025,28 @@ function AlertsTab({
 
 function AccessTab({
   currentUserId,
+  onCreateUser,
   onUpdateRole,
   profiles,
 }: {
   currentUserId: string
+  onCreateUser: (newUser: NewUserForm) => Promise<boolean>
   onUpdateRole: (userId: string, role: Role) => void
   profiles: Profile[]
 }) {
+  const [newUser, setNewUser] = useState<NewUserForm>(emptyNewUserForm)
+  const [creating, setCreating] = useState(false)
+
+  async function submitNewUser(event: FormEvent) {
+    event.preventDefault()
+    setCreating(true)
+    const created = await onCreateUser(newUser)
+    if (created) {
+      setNewUser(emptyNewUserForm)
+    }
+    setCreating(false)
+  }
+
   return (
     <section className="access-panel">
       <div className="section-title">Níveis de acesso</div>
@@ -980,6 +1064,56 @@ function AccessTab({
           <Eye size={16} /> Leitor apenas consulta.
         </span>
       </div>
+
+      <form className="add-user-form" onSubmit={submitNewUser}>
+        <div className="section-title compact">Novo usuário</div>
+        <div className="user-form-grid">
+          <label>
+            Nome
+            <input
+              autoComplete="name"
+              value={newUser.fullName}
+              onChange={(event) => setNewUser({ ...newUser, fullName: event.target.value })}
+            />
+          </label>
+          <label>
+            E-mail
+            <input
+              autoComplete="email"
+              required
+              type="email"
+              value={newUser.email}
+              onChange={(event) => setNewUser({ ...newUser, email: event.target.value })}
+            />
+          </label>
+          <label>
+            Senha
+            <input
+              autoComplete="new-password"
+              minLength={6}
+              required
+              type="password"
+              value={newUser.password}
+              onChange={(event) => setNewUser({ ...newUser, password: event.target.value })}
+            />
+          </label>
+          <label>
+            Nível
+            <select value={newUser.role} onChange={(event) => setNewUser({ ...newUser, role: event.target.value as Role })}>
+              {roles.map((role) => (
+                <option key={role} value={role}>
+                  {roleLabel(role)}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <button className="small-action" type="submit" disabled={creating}>
+          <UserPlus size={15} />
+          {creating ? 'Cadastrando...' : 'Cadastrar usuário'}
+        </button>
+      </form>
+
       <section className="table-shell">
         <table>
           <thead>

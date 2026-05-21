@@ -812,6 +812,10 @@ tr:last-child td {
   max-width: 980px;
 }
 
+.section-title.compact {
+  margin-bottom: 0;
+}
+
 .role-help {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -830,6 +834,23 @@ tr:last-child td {
   border: 1px solid var(--border);
   border-radius: 8px;
   font-size: 12px;
+}
+
+.add-user-form {
+  display: grid;
+  gap: 14px;
+  margin-bottom: 16px;
+  padding: 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.user-form-grid {
+  display: grid;
+  grid-template-columns: 1.2fr 1.3fr 0.9fr 0.8fr;
+  gap: 12px;
+  align-items: end;
 }
 
 .overlay {
@@ -962,6 +983,7 @@ tr:last-child td {
   }
 
   .add-protein-form,
+  .user-form-grid,
   .live-calc {
     grid-template-columns: 1fr;
   }
