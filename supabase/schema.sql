@@ -175,6 +175,27 @@ to authenticated
 using (public.current_user_role() = 'admin')
 with check (public.current_user_role() = 'admin');
 
+create or replace function public.responsible_options()
+returns table (
+  id uuid,
+  full_name text
+)
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select profiles.id, profiles.full_name
+  from public.profiles
+  where auth.uid() is not null
+    and profiles.full_name is not null
+    and btrim(profiles.full_name) <> ''
+  order by profiles.full_name;
+$$;
+
+revoke all on function public.responsible_options() from public;
+grant execute on function public.responsible_options() to authenticated;
+
 drop policy if exists "proteins_select_authenticated" on public.proteins;
 create policy "proteins_select_authenticated"
 on public.proteins for select

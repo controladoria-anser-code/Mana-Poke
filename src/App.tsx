@@ -61,6 +61,11 @@ type NewUserForm = {
   role: Role
 }
 
+type ResponsibleOption = {
+  id: string
+  full_name: string | null
+}
+
 const emptyBatchForm: BatchForm = {
   proteinId: '',
   grossKg: '',
@@ -78,6 +83,25 @@ const emptyNewUserForm: NewUserForm = {
 }
 
 const roles: Role[] = ['admin', 'gestor', 'operador', 'viewer']
+const defaultResponsibleNames = ['Cássia', 'Adriano', 'Edelmara']
+const otherResponsibleValue = 'Outro'
+const otherResponsibleLabel = 'Outro (colocar na observação)'
+
+function buildResponsibleNames(options: ResponsibleOption[]) {
+  const names = new Map<string, string>()
+
+  for (const name of defaultResponsibleNames) {
+    names.set(name.trim().toLocaleLowerCase('pt-BR'), name)
+  }
+
+  for (const option of options) {
+    const name = option.full_name?.trim()
+    if (!name || name.toLocaleLowerCase('pt-BR') === otherResponsibleValue.toLocaleLowerCase('pt-BR')) continue
+    names.set(name.toLocaleLowerCase('pt-BR'), name)
+  }
+
+  return [...names.values()].sort((a, b) => a.localeCompare(b, 'pt-BR'))
+}
 
 function App() {
   const [session, setSession] = useState<Session | null>(null)
@@ -224,6 +248,7 @@ function AuthPanel() {
 function Workspace({ session }: { session: Session }) {
   const [profile, setProfile] = useState<Profile | null>(null)
   const [profiles, setProfiles] = useState<Profile[]>([])
+  const [responsibleOptions, setResponsibleOptions] = useState<ResponsibleOption[]>([])
   const [proteins, setProteins] = useState<Protein[]>([])
   const [batches, setBatches] = useState<Batch[]>([])
   const [threshold, setThreshold] = useState(1)
@@ -268,16 +293,18 @@ function Workspace({ session }: { session: Session }) {
       return
     }
 
-    const [proteinRows, batchRows, settingRows] = await Promise.all([
+    const [proteinRows, batchRows, settingRows, responsibleRows] = await Promise.all([
       supabase.from('proteins_for_current_user').select('*').eq('active', true).order('name'),
       supabase.from('batches_for_current_user').select('*').order('recorded_at', { ascending: false }),
       supabase.from('app_settings').select('*'),
+      supabase.rpc('responsible_options'),
     ])
 
     setProfile(nextProfile)
     setProteins((proteinRows.data ?? []) as Protein[])
     setBatches((batchRows.data ?? []) as Batch[])
     setThreshold(Number(((settingRows.data ?? []) as AppSetting[]).find((item) => item.key === 'alert_threshold')?.value ?? 1))
+    setResponsibleOptions(responsibleRows.error ? [] : ((responsibleRows.data ?? []) as ResponsibleOption[]))
 
     if (canManageUsers(nextProfile.role)) {
       const { data: allProfiles } = await supabase.from('profiles').select('*').order('created_at')
@@ -304,6 +331,7 @@ function Workspace({ session }: { session: Session }) {
   const showCosts = canViewCosts(role)
   const showTargets = canViewTargets(role)
   const alerts = useMemo(() => buildAlerts(proteins, batches, threshold, showTargets), [batches, proteins, showTargets, threshold])
+  const responsibleNames = useMemo(() => buildResponsibleNames(responsibleOptions), [responsibleOptions])
   const today = useMemo(() => new Date(), [])
 
   const summary = useMemo(() => {
@@ -408,6 +436,16 @@ function Workspace({ session }: { session: Session }) {
     const net = Number(batchForm.netKg)
     if (!protein || gross <= 0 || net <= 0 || net > gross) {
       setStatus('Confira proteína, peso bruto e peso líquido.')
+      return
+    }
+
+    if (!batchForm.responsible) {
+      setStatus('Selecione o responsável.')
+      return
+    }
+
+    if (batchForm.responsible === otherResponsibleValue && !batchForm.notes.trim()) {
+      setStatus('Informe o responsável nas observações.')
       return
     }
 
@@ -619,6 +657,7 @@ function Workspace({ session }: { session: Session }) {
           onClose={() => setModalOpen(false)}
           onSubmit={createBatch}
           proteins={proteins}
+          responsibleNames={responsibleNames}
           showCosts={showCosts}
           showTargets={showTargets}
         />
@@ -1184,6 +1223,7 @@ function BatchModal({
   onClose,
   onSubmit,
   proteins,
+  responsibleNames,
   showCosts,
   showTargets,
 }: {
@@ -1192,6 +1232,7 @@ function BatchModal({
   onClose: () => void
   onSubmit: (event: FormEvent) => void
   proteins: Protein[]
+  responsibleNames: string[]
   showCosts: boolean
   showTargets: boolean
 }) {
@@ -1278,7 +1319,15 @@ function BatchModal({
             </label>
             <label>
               Responsável
-              <input value={form.responsible} onChange={(event) => onChange({ ...form, responsible: event.target.value })} />
+              <select required value={form.responsible} onChange={(event) => onChange({ ...form, responsible: event.target.value })}>
+                <option value="">Selecione</option>
+                {responsibleNames.map((name) => (
+                  <option key={name} value={name}>
+                    {name}
+                  </option>
+                ))}
+                <option value={otherResponsibleValue}>{otherResponsibleLabel}</option>
+              </select>
             </label>
           </div>
 
