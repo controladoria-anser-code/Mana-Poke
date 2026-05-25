@@ -43,6 +43,16 @@ create table if not exists public.app_settings (
   updated_at timestamptz not null default now()
 );
 
+create table if not exists public.production_responsibles (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  created_by uuid references auth.users(id) default auth.uid(),
+  created_at timestamptz not null default now()
+);
+
+create unique index if not exists production_responsibles_name_unique
+  on public.production_responsibles (lower(btrim(name)));
+
 create or replace function public.current_user_role()
 returns text
 language sql
@@ -155,6 +165,7 @@ alter table public.profiles enable row level security;
 alter table public.proteins enable row level security;
 alter table public.batches enable row level security;
 alter table public.app_settings enable row level security;
+alter table public.production_responsibles enable row level security;
 
 drop policy if exists "profiles_select_own_or_admin" on public.profiles;
 create policy "profiles_select_own_or_admin"
@@ -175,26 +186,23 @@ to authenticated
 using (public.current_user_role() = 'admin')
 with check (public.current_user_role() = 'admin');
 
-create or replace function public.responsible_options()
-returns table (
-  id uuid,
-  full_name text
-)
-language sql
-stable
-security definer
-set search_path = public
-as $$
-  select profiles.id, profiles.full_name
-  from public.profiles
-  where auth.uid() is not null
-    and profiles.full_name is not null
-    and btrim(profiles.full_name) <> ''
-  order by profiles.full_name;
-$$;
+drop policy if exists "responsibles_select_authenticated" on public.production_responsibles;
+create policy "responsibles_select_authenticated"
+on public.production_responsibles for select
+to authenticated
+using (true);
 
-revoke all on function public.responsible_options() from public;
-grant execute on function public.responsible_options() to authenticated;
+drop policy if exists "responsibles_insert_admin" on public.production_responsibles;
+create policy "responsibles_insert_admin"
+on public.production_responsibles for insert
+to authenticated
+with check (public.current_user_role() = 'admin');
+
+drop policy if exists "responsibles_delete_admin" on public.production_responsibles;
+create policy "responsibles_delete_admin"
+on public.production_responsibles for delete
+to authenticated
+using (public.current_user_role() = 'admin');
 
 drop policy if exists "proteins_select_authenticated" on public.proteins;
 create policy "proteins_select_authenticated"
@@ -300,12 +308,22 @@ revoke select on public.batches from anon, authenticated;
 grant select (id, slug, name, active, created_at) on public.proteins to authenticated;
 grant select (id, protein_id, gross_kg, net_kg, yield_pct, shift, responsible, notes, recorded_at, created_by)
   on public.batches to authenticated;
+grant select, insert, delete on public.production_responsibles to authenticated;
 grant select on public.proteins_for_current_user to authenticated;
 grant select on public.batches_for_current_user to authenticated;
 
 insert into public.app_settings (key, value)
 values ('alert_threshold', '1')
 on conflict (key) do nothing;
+
+insert into public.production_responsibles (name)
+select name
+from (values ('Cássia'), ('Adriano'), ('Edelmara')) as seed(name)
+where not exists (
+  select 1
+  from public.production_responsibles
+  where lower(btrim(production_responsibles.name)) = lower(btrim(seed.name))
+);
 
 insert into public.proteins (slug, name, cost, target_yield)
 values

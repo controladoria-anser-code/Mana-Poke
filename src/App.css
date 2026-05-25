@@ -857,6 +857,51 @@ tr:last-child td {
   align-items: end;
 }
 
+.responsibles-panel {
+  display: grid;
+  gap: 14px;
+  margin-bottom: 16px;
+  padding: 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.responsible-form {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 12px;
+}
+
+.responsibles-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 8px;
+}
+
+.responsible-row {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 10px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+}
+
+.responsible-row span {
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-weight: 800;
+}
+
+.empty-responsibles {
+  margin: 0;
+  color: var(--muted);
+}
+
 .overlay {
   position: fixed;
   inset: 0;
@@ -991,6 +1036,7 @@ tr:last-child td {
   }
 
   .add-protein-form,
+  .responsible-form,
   .user-form-grid,
   .live-calc {
     grid-template-columns: 1fr;

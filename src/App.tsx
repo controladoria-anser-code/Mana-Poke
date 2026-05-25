@@ -63,7 +63,8 @@ type NewUserForm = {
 
 type ResponsibleOption = {
   id: string
-  full_name: string | null
+  name: string
+  created_at: string
 }
 
 const emptyBatchForm: BatchForm = {
@@ -83,24 +84,11 @@ const emptyNewUserForm: NewUserForm = {
 }
 
 const roles: Role[] = ['admin', 'gestor', 'operador', 'viewer']
-const defaultResponsibleNames = ['Cássia', 'Adriano', 'Edelmara']
 const otherResponsibleValue = 'Outro'
 const otherResponsibleLabel = 'Outro (colocar na observação)'
 
 function buildResponsibleNames(options: ResponsibleOption[]) {
-  const names = new Map<string, string>()
-
-  for (const name of defaultResponsibleNames) {
-    names.set(name.trim().toLocaleLowerCase('pt-BR'), name)
-  }
-
-  for (const option of options) {
-    const name = option.full_name?.trim()
-    if (!name || name.toLocaleLowerCase('pt-BR') === otherResponsibleValue.toLocaleLowerCase('pt-BR')) continue
-    names.set(name.toLocaleLowerCase('pt-BR'), name)
-  }
-
-  return [...names.values()].sort((a, b) => a.localeCompare(b, 'pt-BR'))
+  return options.map((option) => option.name).sort((a, b) => a.localeCompare(b, 'pt-BR'))
 }
 
 function App() {
@@ -297,7 +285,7 @@ function Workspace({ session }: { session: Session }) {
       supabase.from('proteins_for_current_user').select('*').eq('active', true).order('name'),
       supabase.from('batches_for_current_user').select('*').order('recorded_at', { ascending: false }),
       supabase.from('app_settings').select('*'),
-      supabase.rpc('responsible_options'),
+      supabase.from('production_responsibles').select('*').order('name'),
     ])
 
     setProfile(nextProfile)
@@ -497,6 +485,48 @@ function Workspace({ session }: { session: Session }) {
     await loadWorkspace()
   }
 
+  async function createResponsible(name: string) {
+    if (!supabase || !canManageUsers(role)) return false
+    const trimmedName = name.trim()
+
+    if (!trimmedName) {
+      setStatus('Informe o nome do responsável.')
+      return false
+    }
+
+    if (trimmedName.toLocaleLowerCase('pt-BR') === otherResponsibleValue.toLocaleLowerCase('pt-BR')) {
+      setStatus('Use um nome específico. A opção Outro já aparece automaticamente no formulário.')
+      return false
+    }
+
+    const { error } = await supabase
+      .from('production_responsibles')
+      .insert({ name: trimmedName, created_by: session.user.id })
+
+    if (error) {
+      setStatus(error.code === '23505' ? 'Esse responsável já está cadastrado.' : error.message)
+      return false
+    }
+
+    setStatus('Responsável cadastrado com sucesso.')
+    await loadWorkspace()
+    return true
+  }
+
+  async function deleteResponsible(responsible: ResponsibleOption) {
+    if (!supabase || !canManageUsers(role)) return
+    if (!window.confirm(`Descadastrar "${responsible.name}" da lista de responsáveis?`)) return
+
+    const { error } = await supabase.from('production_responsibles').delete().eq('id', responsible.id)
+    if (error) {
+      setStatus(error.message)
+      return
+    }
+
+    setStatus('Responsável descadastrado com sucesso.')
+    await loadWorkspace()
+  }
+
   async function createUser(newUser: NewUserForm) {
     if (!supabase || !canManageUsers(role)) return false
     const authClient = createIsolatedSupabaseClient()
@@ -646,7 +676,15 @@ function Workspace({ session }: { session: Session }) {
         )}
 
         {tab === 'acessos' && canManageUsers(role) && (
-          <AccessTab currentUserId={profile.id} onCreateUser={createUser} onUpdateRole={updateRole} profiles={profiles} />
+          <AccessTab
+            currentUserId={profile.id}
+            onCreateResponsible={createResponsible}
+            onCreateUser={createUser}
+            onDeleteResponsible={deleteResponsible}
+            onUpdateRole={updateRole}
+            profiles={profiles}
+            responsibleOptions={responsibleOptions}
+          />
         )}
       </main>
 
@@ -1090,17 +1128,25 @@ function AlertsTab({
 
 function AccessTab({
   currentUserId,
+  onCreateResponsible,
   onCreateUser,
+  onDeleteResponsible,
   onUpdateRole,
   profiles,
+  responsibleOptions,
 }: {
   currentUserId: string
+  onCreateResponsible: (name: string) => Promise<boolean>
   onCreateUser: (newUser: NewUserForm) => Promise<boolean>
+  onDeleteResponsible: (responsible: ResponsibleOption) => void
   onUpdateRole: (userId: string, role: Role) => void
   profiles: Profile[]
+  responsibleOptions: ResponsibleOption[]
 }) {
   const [newUser, setNewUser] = useState<NewUserForm>(emptyNewUserForm)
+  const [newResponsible, setNewResponsible] = useState('')
   const [creating, setCreating] = useState(false)
+  const [creatingResponsible, setCreatingResponsible] = useState(false)
 
   async function submitNewUser(event: FormEvent) {
     event.preventDefault()
@@ -1110,6 +1156,16 @@ function AccessTab({
       setNewUser(emptyNewUserForm)
     }
     setCreating(false)
+  }
+
+  async function submitResponsible(event: FormEvent) {
+    event.preventDefault()
+    setCreatingResponsible(true)
+    const created = await onCreateResponsible(newResponsible)
+    if (created) {
+      setNewResponsible('')
+    }
+    setCreatingResponsible(false)
   }
 
   return (
@@ -1178,6 +1234,37 @@ function AccessTab({
           {creating ? 'Cadastrando...' : 'Cadastrar usuário'}
         </button>
       </form>
+
+      <section className="responsibles-panel">
+        <div className="section-title compact">Responsáveis da produção</div>
+        <form className="responsible-form" onSubmit={submitResponsible}>
+          <input
+            placeholder="Nome do responsável"
+            value={newResponsible}
+            onChange={(event) => setNewResponsible(event.target.value)}
+          />
+          <button className="small-action" type="submit" disabled={creatingResponsible}>
+            <Plus size={15} />
+            {creatingResponsible ? 'Cadastrando...' : 'Cadastrar'}
+          </button>
+        </form>
+        <div className="responsibles-list">
+          {responsibleOptions.map((responsible) => (
+            <div className="responsible-row" key={responsible.id}>
+              <span>{responsible.name}</span>
+              <button
+                className="icon-btn danger"
+                type="button"
+                onClick={() => onDeleteResponsible(responsible)}
+                title="Descadastrar responsável"
+              >
+                <Trash2 size={15} />
+              </button>
+            </div>
+          ))}
+          {responsibleOptions.length === 0 && <p className="empty-responsibles">Nenhum responsável cadastrado.</p>}
+        </div>
+      </section>
 
       <section className="table-shell">
         <table>
