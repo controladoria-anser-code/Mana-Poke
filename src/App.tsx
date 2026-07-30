@@ -3,69 +3,42 @@ import {
   AlertTriangle,
   Bell,
   ClipboardList,
-  Edit3,
-  Eye,
-  KeyRound,
   LogOut,
   Plus,
   RefreshCw,
-  Save,
   Shield,
-  Trash2,
-  UserPlus,
   Users,
-  X,
 } from 'lucide-react'
-import type { Session } from '@supabase/supabase-js'
+import { FunctionsHttpError, type Session } from '@supabase/supabase-js'
 import './App.css'
-import { createIsolatedSupabaseClient, supabase, isSupabaseConfigured } from './lib/supabase'
-import type { AppSetting, Batch, Profile, Protein, Role } from './types'
+import { supabase, isSupabaseConfigured } from './lib/supabase'
+import type { AppSetting, Batch, BatchForm, NewUserForm, Profile, Protein, ResponsibleOption, Role } from './types'
 import {
+  BUSINESS_TIME_ZONE,
   averageYield,
-  batchesForProtein,
   buildAlerts,
-  daysSince,
-  fmtBRL,
   fmtKg,
   fmtPct,
   isSameDay,
-  lastBatch,
-  rendStatus,
-  statusLabel,
+  startOfMetricWindow,
+  weightedYield,
 } from './lib/metrics'
 import {
   canCreateBatch,
-  canDeleteBatch,
   canManageProteins,
   canManageUsers,
+  canVoidBatch,
   canViewCosts,
   canViewTargets,
   roleLabel,
 } from './lib/permissions'
+import { useNow } from './hooks/useNow'
+import { AuthPanel, SetupRequired, Splash } from './components/AuthViews'
+import { AccessTab } from './components/AccessTab'
+import { AlertsTab } from './components/AlertsTab'
+import { BatchModal, Metric, ProductionTab } from './components/ProductionViews'
 
 type Tab = 'producao' | 'alertas' | 'acessos'
-
-type BatchForm = {
-  proteinId: string
-  grossKg: string
-  netKg: string
-  shift: Batch['shift']
-  responsible: string
-  notes: string
-}
-
-type NewUserForm = {
-  fullName: string
-  email: string
-  password: string
-  role: Role
-}
-
-type ResponsibleOption = {
-  id: string
-  name: string
-  created_at: string
-}
 
 const emptyBatchForm: BatchForm = {
   proteinId: '',
@@ -76,16 +49,8 @@ const emptyBatchForm: BatchForm = {
   notes: '',
 }
 
-const emptyNewUserForm: NewUserForm = {
-  fullName: '',
-  email: '',
-  password: '',
-  role: 'operador',
-}
-
-const roles: Role[] = ['admin', 'gestor', 'operador', 'viewer']
 const otherResponsibleValue = 'Outro'
-const otherResponsibleLabel = 'Outro (colocar na observação)'
+const batchPageSize = 250
 
 function buildResponsibleNames(options: ResponsibleOption[]) {
   return options.map((option) => option.name).sort((a, b) => a.localeCompare(b, 'pt-BR'))
@@ -94,16 +59,21 @@ function buildResponsibleNames(options: ResponsibleOption[]) {
 function App() {
   const [session, setSession] = useState<Session | null>(null)
   const [booting, setBooting] = useState(isSupabaseConfigured)
+  const [authMessage, setAuthMessage] = useState('')
 
   useEffect(() => {
     if (!supabase) {
       return
     }
 
-    supabase.auth.getSession().then(({ data }) => {
-      setSession(data.session)
-      setBooting(false)
-    })
+    supabase.auth
+      .getSession()
+      .then(({ data, error }) => {
+        setSession(data.session)
+        if (error) setAuthMessage(`Não foi possível recuperar a sessão: ${error.message}`)
+      })
+      .catch(() => setAuthMessage('Não foi possível conectar ao serviço de autenticação.'))
+      .finally(() => setBooting(false))
 
     const { data } = supabase.auth.onAuthStateChange((_event, nextSession) => {
       setSession(nextSession)
@@ -114,123 +84,9 @@ function App() {
 
   if (!isSupabaseConfigured) return <SetupRequired />
   if (booting) return <Splash text="Carregando sessão..." />
-  if (!session) return <AuthPanel />
+  if (!session) return <AuthPanel initialMessage={authMessage} />
 
   return <Workspace session={session} />
-}
-
-function SetupRequired() {
-  return (
-    <main className="setup-screen">
-      <section className="setup-panel">
-        <div className="logo-lock">
-          <Shield size={28} />
-        </div>
-        <h1>Conectar o Supabase</h1>
-        <p>
-          Configure na Vercel <code>NEXT_PUBLIC_SUPABASE_URL</code> e{' '}
-          <code>NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY</code>, ou use <code>VITE_SUPABASE_URL</code> e{' '}
-          <code>VITE_SUPABASE_ANON_KEY</code> localmente. O SQL de criação está em <code>supabase/schema.sql</code>.
-        </p>
-      </section>
-    </main>
-  )
-}
-
-function Splash({ text }: { text: string }) {
-  return (
-    <main className="setup-screen">
-      <section className="setup-panel compact">
-        <RefreshCw className="spin" size={24} />
-        <p>{text}</p>
-      </section>
-    </main>
-  )
-}
-
-function AuthPanel() {
-  const [mode, setMode] = useState<'login' | 'signup'>('login')
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
-  const [fullName, setFullName] = useState('')
-  const [message, setMessage] = useState('')
-  const [loading, setLoading] = useState(false)
-
-  async function submit(event: FormEvent) {
-    event.preventDefault()
-    if (!supabase) return
-    setLoading(true)
-    setMessage('')
-
-    const result =
-      mode === 'login'
-        ? await supabase.auth.signInWithPassword({ email, password })
-        : await supabase.auth.signUp({
-            email,
-            password,
-            options: { data: { full_name: fullName } },
-          })
-
-    if (result.error) {
-      setMessage(result.error.message)
-    } else if (mode === 'signup') {
-      setMessage('Cadastro criado. Verifique o e-mail se a confirmação estiver ativa no Supabase.')
-    }
-
-    setLoading(false)
-  }
-
-  return (
-    <main className="auth-page">
-      <section className="auth-card">
-        <div className="auth-brand">
-          <div className="logo-mark">MP</div>
-          <div>
-            <strong>Mana Poke</strong>
-            <span>Controle de rendimento online</span>
-          </div>
-        </div>
-
-        <div className="mode-switch" role="tablist" aria-label="Modo de acesso">
-          <button className={mode === 'login' ? 'active' : ''} type="button" onClick={() => setMode('login')}>
-            Entrar
-          </button>
-          <button className={mode === 'signup' ? 'active' : ''} type="button" onClick={() => setMode('signup')}>
-            Cadastrar
-          </button>
-        </div>
-
-        <form className="auth-form" onSubmit={submit}>
-          {mode === 'signup' && (
-            <label>
-              Nome
-              <input value={fullName} onChange={(event) => setFullName(event.target.value)} autoComplete="name" />
-            </label>
-          )}
-          <label>
-            E-mail
-            <input value={email} onChange={(event) => setEmail(event.target.value)} type="email" required />
-          </label>
-          <label>
-            Senha
-            <input
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              type="password"
-              minLength={6}
-              required
-            />
-          </label>
-
-          <button className="primary-btn" type="submit" disabled={loading}>
-            <KeyRound size={18} />
-            {loading ? 'Aguarde...' : mode === 'login' ? 'Entrar' : 'Criar acesso'}
-          </button>
-          {message && <p className="form-message">{message}</p>}
-        </form>
-      </section>
-    </main>
-  )
 }
 
 function Workspace({ session }: { session: Session }) {
@@ -239,7 +95,12 @@ function Workspace({ session }: { session: Session }) {
   const [responsibleOptions, setResponsibleOptions] = useState<ResponsibleOption[]>([])
   const [proteins, setProteins] = useState<Protein[]>([])
   const [batches, setBatches] = useState<Batch[]>([])
+  const [metricBatches, setMetricBatches] = useState<Batch[]>([])
+  const [latestBatches, setLatestBatches] = useState<Batch[]>([])
+  const [hasMoreBatches, setHasMoreBatches] = useState(false)
+  const [loadingMoreBatches, setLoadingMoreBatches] = useState(false)
   const [threshold, setThreshold] = useState(1)
+  const [yieldWindowDays, setYieldWindowDays] = useState(30)
   const [tab, setTab] = useState<Tab>('producao')
   const [batchForm, setBatchForm] = useState<BatchForm>(emptyBatchForm)
   const [modalOpen, setModalOpen] = useState(false)
@@ -250,7 +111,6 @@ function Workspace({ session }: { session: Session }) {
   const loadWorkspace = useCallback(async () => {
     if (!supabase) return
     setLoading(true)
-    setStatus('')
 
     const { data: profileRow, error: profileError } = await supabase
       .from('profiles')
@@ -258,51 +118,78 @@ function Workspace({ session }: { session: Session }) {
       .eq('id', session.user.id)
       .maybeSingle()
 
-    let nextProfile = profileRow as Profile | null
+    const nextProfile = profileRow as Profile | null
 
-    if (!nextProfile && !profileError) {
-      const { data: createdProfile } = await supabase
-        .from('profiles')
-        .insert({
-          id: session.user.id,
-          email: session.user.email ?? '',
-          full_name: session.user.user_metadata.full_name ?? null,
-          role: 'operador',
-        })
-        .select('*')
-        .single()
-
-      nextProfile = createdProfile as Profile | null
-    }
-
-    if (!nextProfile) {
-      setStatus(profileError?.message ?? 'Não foi possível carregar o perfil do usuário.')
+    if (!nextProfile || !nextProfile.enabled) {
+      setProfile(null)
+      setStatus(
+        profileError?.message ??
+          'Seu acesso ainda não foi habilitado. Solicite a um administrador que regularize o usuário.',
+      )
       setLoading(false)
       return
     }
 
-    const [proteinRows, batchRows, settingRows, responsibleRows] = await Promise.all([
-      supabase.from('proteins_for_current_user').select('*').eq('active', true).order('name'),
-      supabase.from('batches_for_current_user').select('*').order('recorded_at', { ascending: false }),
+    setProfile(nextProfile)
+    const metricWindowStart = startOfMetricWindow(yieldWindowDays).toISOString()
+    const [proteinRows, batchRows, metricBatchRows, latestBatchRows, settingRows, responsibleRows] = await Promise.all([
+      supabase.from('proteins_for_current_user').select('*').order('name'),
+      supabase
+        .from('batches_for_current_user')
+        .select('*')
+        .order('recorded_at', { ascending: false })
+        .range(0, batchPageSize - 1),
+      supabase
+        .from('batches_for_current_user')
+        .select('*')
+        .is('voided_at', null)
+        .gte('recorded_at', metricWindowStart)
+        .order('recorded_at', { ascending: false }),
+      supabase.from('latest_batches_for_current_user').select('*'),
       supabase.from('app_settings').select('*'),
       supabase.from('production_responsibles').select('*').order('name'),
     ])
 
-    setProfile(nextProfile)
+    const loadError = [
+      proteinRows.error,
+      batchRows.error,
+      metricBatchRows.error,
+      latestBatchRows.error,
+      settingRows.error,
+      responsibleRows.error,
+    ].find(Boolean)
+
+    if (loadError) {
+      setStatus(`Não foi possível sincronizar todos os dados: ${loadError.message}`)
+      setLoading(false)
+      return
+    }
+
     setProteins((proteinRows.data ?? []) as Protein[])
     setBatches((batchRows.data ?? []) as Batch[])
-    setThreshold(Number(((settingRows.data ?? []) as AppSetting[]).find((item) => item.key === 'alert_threshold')?.value ?? 1))
-    setResponsibleOptions(responsibleRows.error ? [] : ((responsibleRows.data ?? []) as ResponsibleOption[]))
+    setMetricBatches((metricBatchRows.data ?? []) as Batch[])
+    setLatestBatches((latestBatchRows.data ?? []) as Batch[])
+    setHasMoreBatches((batchRows.data?.length ?? 0) === batchPageSize)
+
+    const settings = (settingRows.data ?? []) as AppSetting[]
+    const loadedThreshold = Number(settings.find((item) => item.key === 'alert_threshold')?.value ?? 1)
+    const loadedWindow = Number(settings.find((item) => item.key === 'yield_window_days')?.value ?? 30)
+    setThreshold(Number.isFinite(loadedThreshold) && loadedThreshold >= 1 ? loadedThreshold : 1)
+    setYieldWindowDays(Number.isFinite(loadedWindow) && loadedWindow >= 1 ? loadedWindow : 30)
+    setResponsibleOptions((responsibleRows.data ?? []) as ResponsibleOption[])
 
     if (canManageUsers(nextProfile.role)) {
-      const { data: allProfiles } = await supabase.from('profiles').select('*').order('created_at')
+      const { data: allProfiles, error: profilesError } = await supabase.from('profiles').select('*').order('created_at')
+      if (profilesError) {
+        setStatus(`Dados carregados, mas os acessos não puderam ser consultados: ${profilesError.message}`)
+      }
       setProfiles((allProfiles ?? []) as Profile[])
     } else {
       setProfiles([])
     }
 
     setLoading(false)
-  }, [session.user.email, session.user.id, session.user.user_metadata.full_name])
+  }, [session.user.id, yieldWindowDays])
 
   useEffect(() => {
     let cancelled = false
@@ -318,17 +205,21 @@ function Workspace({ session }: { session: Session }) {
   const role = profile?.role ?? 'viewer'
   const showCosts = canViewCosts(role)
   const showTargets = canViewTargets(role)
-  const alerts = useMemo(() => buildAlerts(proteins, batches, threshold, showTargets), [batches, proteins, showTargets, threshold])
+  const activeProteins = useMemo(() => proteins.filter((protein) => protein.active), [proteins])
+  const alerts = useMemo(
+    () => buildAlerts(activeProteins, metricBatches, latestBatches, threshold, showTargets),
+    [activeProteins, latestBatches, metricBatches, showTargets, threshold],
+  )
   const responsibleNames = useMemo(() => buildResponsibleNames(responsibleOptions), [responsibleOptions])
-  const today = useMemo(() => new Date(), [])
+  const today = useNow()
 
   const summary = useMemo(() => {
-    const todayBatches = batches.filter((batch) => isSameDay(new Date(batch.recorded_at), today))
-    const averages = proteins
-      .map((protein) => ({ protein, avg: averageYield(batches, protein.id) }))
+    const todayBatches = metricBatches.filter((batch) => isSameDay(new Date(batch.recorded_at), today))
+    const averages = activeProteins
+      .map((protein) => ({ protein, avg: averageYield(metricBatches, protein.id) }))
       .filter((item): item is { protein: Protein; avg: number } => item.avg !== null)
 
-    const average = averages.length ? averages.reduce((sum, item) => sum + item.avg, 0) / averages.length : null
+    const average = weightedYield(metricBatches)
     const targetAverages = averages
       .map((item) => ({ ...item, target: item.protein.target_yield }))
       .filter((item): item is { protein: Protein; avg: number; target: number } => item.target !== null)
@@ -337,44 +228,96 @@ function Workspace({ session }: { session: Session }) {
     const totalNet = todayBatches.reduce((sum, batch) => sum + batch.net_kg, 0)
 
     return { todayCount: todayBatches.length, average, above, below, totalNet }
-  }, [batches, proteins, showTargets, today])
+  }, [activeProteins, metricBatches, showTargets, today])
 
   function openBatchModal(proteinId = '') {
     setBatchForm({ ...emptyBatchForm, proteinId })
     setModalOpen(true)
   }
 
+  async function loadMoreBatchHistory() {
+    if (!supabase || loadingMoreBatches || !hasMoreBatches) return
+    setLoadingMoreBatches(true)
+    setStatus('')
+
+    const start = batches.length
+    const { data, error } = await supabase
+      .from('batches_for_current_user')
+      .select('*')
+      .order('recorded_at', { ascending: false })
+      .range(start, start + batchPageSize - 1)
+
+    if (error) {
+      setStatus(`Não foi possível carregar mais lotes: ${error.message}`)
+    } else {
+      const nextRows = (data ?? []) as Batch[]
+      setBatches((current) => [...current, ...nextRows])
+      setHasMoreBatches(nextRows.length === batchPageSize)
+    }
+
+    setLoadingMoreBatches(false)
+  }
+
   async function signOut() {
     if (!supabase) return
-    await supabase.auth.signOut()
+    const { error } = await supabase.auth.signOut()
+    if (error) setStatus(error.message)
   }
 
   async function saveThreshold(value: number) {
-    if (!supabase || !canManageProteins(role) || value < 1) return
+    if (!supabase || !canManageProteins(role) || !Number.isInteger(value) || value < 1) {
+      setStatus('O limite sem produção deve ser um número inteiro maior ou igual a 1.')
+      return
+    }
+
+    const { error } = await supabase.from('app_settings').upsert({ key: 'alert_threshold', value: String(value) })
+    if (error) {
+      setStatus(`Não foi possível salvar o limite: ${error.message}`)
+      return
+    }
+
     setThreshold(value)
-    await supabase.from('app_settings').upsert({ key: 'alert_threshold', value: String(value) })
+    setStatus('Limite de alerta atualizado.')
+  }
+
+  async function saveYieldWindow(value: number) {
+    if (!supabase || !canManageProteins(role) || !Number.isInteger(value) || value < 1 || value > 365) {
+      setStatus('A janela de rendimento deve ter entre 1 e 365 dias.')
+      return
+    }
+
+    const { error } = await supabase.from('app_settings').upsert({ key: 'yield_window_days', value: String(value) })
+    if (error) {
+      setStatus(`Não foi possível salvar a janela de rendimento: ${error.message}`)
+      return
+    }
+
+    setYieldWindowDays(value)
+    setStatus('Janela de rendimento atualizada.')
   }
 
   async function updateProtein(id: string, patch: Partial<Pick<Protein, 'cost' | 'target_yield' | 'active'>>) {
     if (!supabase || !canManageProteins(role)) return
+    const nextCost = patch.cost
+    const nextTarget = patch.target_yield
+    if (nextCost !== undefined && (nextCost === null || !Number.isFinite(nextCost) || nextCost <= 0)) {
+      setStatus('O custo deve ser maior que zero.')
+      return
+    }
+    if (
+      nextTarget !== undefined &&
+      (nextTarget === null || !Number.isFinite(nextTarget) || nextTarget <= 0 || nextTarget > 100)
+    ) {
+      setStatus('A meta deve estar entre 1% e 100%.')
+      return
+    }
+
     const client = supabase
     setStatus('')
     const { error } = await client.from('proteins').update(patch).eq('id', id)
     if (error) {
       setStatus(error.message)
       return
-    }
-
-    if (patch.cost && canViewCosts(role)) {
-      const affected = batches.filter((batch) => batch.protein_id === id)
-      await Promise.all(
-        affected.map((batch) =>
-          client
-            .from('batches')
-            .update({ real_cost_kg: patch.cost! / (batch.yield_pct / 100) })
-            .eq('id', batch.id),
-        ),
-      )
     }
 
     await loadWorkspace()
@@ -386,7 +329,10 @@ function Workspace({ session }: { session: Session }) {
     const name = newProtein.name.trim()
     const cost = Number(newProtein.cost)
     const target = Number(newProtein.target)
-    if (!name || cost <= 0 || target <= 0) return
+    if (!name || !Number.isFinite(cost) || cost <= 0 || !Number.isFinite(target) || target <= 0 || target > 100) {
+      setStatus('Informe nome, custo maior que zero e meta entre 1% e 100%.')
+      return
+    }
 
     const slug = `${name
       .normalize('NFD')
@@ -402,17 +348,20 @@ function Workspace({ session }: { session: Session }) {
     }
 
     setNewProtein({ name: '', cost: '', target: '80' })
+    setStatus('Proteína cadastrada com sucesso.')
     await loadWorkspace()
   }
 
-  async function deleteProtein(protein: Protein) {
+  async function toggleProtein(protein: Protein) {
     if (!supabase || !canManageProteins(role)) return
-    if (!window.confirm(`Remover "${protein.name}" e seus lotes?`)) return
-    const { error } = await supabase.from('proteins').delete().eq('id', protein.id)
+    const action = protein.active ? 'desativar' : 'reativar'
+    if (!window.confirm(`${action === 'desativar' ? 'Desativar' : 'Reativar'} "${protein.name}"?`)) return
+    const { error } = await supabase.from('proteins').update({ active: !protein.active }).eq('id', protein.id)
     if (error) {
       setStatus(error.message)
       return
     }
+    setStatus(`Proteína ${protein.active ? 'desativada' : 'reativada'} sem alterar o histórico.`)
     await loadWorkspace()
   }
 
@@ -422,7 +371,15 @@ function Workspace({ session }: { session: Session }) {
     const protein = proteins.find((item) => item.id === batchForm.proteinId)
     const gross = Number(batchForm.grossKg)
     const net = Number(batchForm.netKg)
-    if (!protein || gross <= 0 || net <= 0 || net > gross) {
+    if (
+      !protein ||
+      !protein.active ||
+      !Number.isFinite(gross) ||
+      !Number.isFinite(net) ||
+      gross <= 0 ||
+      net <= 0 ||
+      net > gross
+    ) {
       setStatus('Confira proteína, peso bruto e peso líquido.')
       return
     }
@@ -437,20 +394,13 @@ function Workspace({ session }: { session: Session }) {
       return
     }
 
-    const yieldPct = (net / gross) * 100
     const payload: Record<string, unknown> = {
       protein_id: protein.id,
       gross_kg: gross,
       net_kg: net,
-      yield_pct: yieldPct,
       shift: batchForm.shift,
       responsible: batchForm.responsible.trim() || null,
       notes: batchForm.notes.trim() || null,
-      created_by: session.user.id,
-    }
-
-    if (canViewCosts(role) && protein.cost) {
-      payload.real_cost_kg = protein.cost / (yieldPct / 100)
     }
 
     const { error } = await supabase.from('batches').insert(payload)
@@ -461,27 +411,55 @@ function Workspace({ session }: { session: Session }) {
     }
 
     setModalOpen(false)
+    setStatus('Produção registrada com custo e rendimento congelados no histórico.')
     await loadWorkspace()
   }
 
-  async function deleteBatch(batchId: string) {
-    if (!supabase || !canDeleteBatch(role)) return
-    if (!window.confirm('Excluir este lote?')) return
-    const { error } = await supabase.from('batches').delete().eq('id', batchId)
+  async function voidBatch(batchId: string) {
+    if (!supabase || !canVoidBatch(role)) return
+    const reason = window.prompt('Motivo da anulação do lote:')
+    if (reason === null) return
+    const trimmedReason = reason.trim()
+    if (trimmedReason.length < 3) {
+      setStatus('Informe um motivo com pelo menos 3 caracteres.')
+      return
+    }
+
+    const { error } = await supabase.rpc('void_batch', { p_batch_id: batchId, p_reason: trimmedReason })
     if (error) {
       setStatus(error.message)
       return
     }
+    setStatus('Lote anulado. O registro foi preservado no histórico.')
     await loadWorkspace()
   }
 
   async function updateRole(userId: string, nextRole: Role) {
     if (!supabase || !canManageUsers(role) || userId === profile?.id) return
-    const { error } = await supabase.from('profiles').update({ role: nextRole }).eq('id', userId)
+    const { error } = await supabase.rpc('set_user_role', { p_user_id: userId, p_role: nextRole })
     if (error) {
       setStatus(error.message)
       return
     }
+    await loadWorkspace()
+  }
+
+  async function toggleUser(userProfile: Profile) {
+    if (!supabase || !canManageUsers(role) || userProfile.id === profile?.id) return
+    const enabled = !userProfile.enabled
+    const action = enabled ? 'habilitar' : 'bloquear'
+    if (!window.confirm(`${enabled ? 'Habilitar' : 'Bloquear'} o acesso de "${userProfile.email}"?`)) return
+
+    const { error } = await supabase.rpc('set_user_enabled', {
+      p_enabled: enabled,
+      p_user_id: userProfile.id,
+    })
+    if (error) {
+      setStatus(error.message)
+      return
+    }
+
+    setStatus(`Usuário ${action === 'habilitar' ? 'habilitado' : 'bloqueado'} com sucesso.`)
     await loadWorkspace()
   }
 
@@ -501,7 +479,7 @@ function Workspace({ session }: { session: Session }) {
 
     const { error } = await supabase
       .from('production_responsibles')
-      .insert({ name: trimmedName, created_by: session.user.id })
+      .insert({ name: trimmedName })
 
     if (error) {
       setStatus(error.code === '23505' ? 'Esse responsável já está cadastrado.' : error.message)
@@ -529,50 +507,36 @@ function Workspace({ session }: { session: Session }) {
 
   async function createUser(newUser: NewUserForm) {
     if (!supabase || !canManageUsers(role)) return false
-    const authClient = createIsolatedSupabaseClient()
     const email = newUser.email.trim().toLowerCase()
     const fullName = newUser.fullName.trim()
 
-    if (!authClient) {
-      setStatus('Supabase não configurado.')
-      return false
-    }
-
-    if (!email || newUser.password.length < 6) {
-      setStatus('Informe e-mail e uma senha com pelo menos 6 caracteres.')
+    if (!email || newUser.password.length < 8) {
+      setStatus('Informe e-mail e uma senha com pelo menos 8 caracteres.')
       return false
     }
 
     setStatus('')
 
-    const { data, error } = await authClient.auth.signUp({
-      email,
-      password: newUser.password,
-      options: {
-        data: { full_name: fullName || null },
+    const { error } = await supabase.functions.invoke('admin-create-user', {
+      body: {
+        email,
+        fullName: fullName || null,
+        password: newUser.password,
+        role: newUser.role,
       },
     })
 
-    await authClient.auth.signOut()
-
     if (error) {
-      setStatus(error.message)
-      return false
-    }
-
-    if (!data.user) {
-      setStatus('Não foi possível criar o usuário.')
-      return false
-    }
-
-    const { error: profileError } = await supabase
-      .from('profiles')
-      .update({ full_name: fullName || null, role: newUser.role })
-      .eq('id', data.user.id)
-
-    if (profileError) {
-      setStatus(`Usuário criado, mas não foi possível ajustar o nível: ${profileError.message}`)
-      await loadWorkspace()
+      let errorMessage = error.message
+      if (error instanceof FunctionsHttpError) {
+        try {
+          const responseBody = (await error.context.json()) as { error?: string }
+          errorMessage = responseBody.error ?? errorMessage
+        } catch {
+          // Mantém a mensagem de transporte quando a resposta não for JSON.
+        }
+      }
+      setStatus(errorMessage)
       return false
     }
 
@@ -581,7 +545,28 @@ function Workspace({ session }: { session: Session }) {
     return true
   }
 
-  if (loading || !profile) return <Splash text="Sincronizando dados..." />
+  if (loading) return <Splash text="Sincronizando dados..." />
+  if (!profile) {
+    return (
+      <main className="setup-screen">
+        <section className="setup-panel">
+          <AlertTriangle size={28} />
+          <h1>Acesso não configurado</h1>
+          <p>{status}</p>
+          <div className="setup-actions">
+            <button className="secondary-btn" type="button" onClick={() => void loadWorkspace()}>
+              <RefreshCw size={17} />
+              Tentar novamente
+            </button>
+            <button className="primary-btn" type="button" onClick={() => void signOut()}>
+              <LogOut size={17} />
+              Sair
+            </button>
+          </div>
+        </section>
+      </main>
+    )
+  }
 
   return (
     <div className="app-shell">
@@ -595,7 +580,13 @@ function Workspace({ session }: { session: Session }) {
         </div>
         <div className="topbar-actions">
           <span className="date-label">
-            {today.toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' })}
+            {today.toLocaleDateString('pt-BR', {
+              weekday: 'long',
+              day: '2-digit',
+              month: 'long',
+              year: 'numeric',
+              timeZone: BUSINESS_TIME_ZONE,
+            })}
           </span>
           <span className="role-chip">
             <Shield size={14} />
@@ -615,10 +606,10 @@ function Workspace({ session }: { session: Session }) {
 
       <section className="summary-strip">
         <Metric label="Lotes hoje" value={String(summary.todayCount)} tone="accent" />
-        <Metric label="Rendimento médio" value={fmtPct(summary.average)} />
+        <Metric label={`Rend. ponderado (${yieldWindowDays}d)`} value={fmtPct(summary.average)} />
         {showTargets && <Metric label="Acima da meta" value={String(summary.above)} tone="ok" />}
         {showTargets && <Metric label="Abaixo da meta" value={String(summary.below)} tone="warn" />}
-        <Metric label="Kg produzidos hoje" value={summary.totalNet.toFixed(3)} tone="accent" />
+        <Metric label="Kg produzidos hoje" value={fmtKg(summary.totalNet)} tone="accent" />
       </section>
 
       <nav className="tab-nav">
@@ -639,39 +630,55 @@ function Workspace({ session }: { session: Session }) {
         )}
       </nav>
 
-      {status && <div className="status-banner">{status}</div>}
+      {status && (
+        <div aria-live="polite" className="status-banner" role="status">
+          {status}
+        </div>
+      )}
 
       <main className="main">
         {tab === 'producao' && (
           <ProductionTab
-            batches={batches}
-            canDelete={canDeleteBatch(role)}
+            activeProteins={activeProteins}
+            canCreate={canCreateBatch(role)}
             canEdit={canManageProteins(role)}
-            onDeleteBatch={deleteBatch}
+            canVoid={canVoidBatch(role)}
+            hasMoreBatches={hasMoreBatches}
+            historyBatches={batches}
+            latestBatches={latestBatches}
+            loadingMoreBatches={loadingMoreBatches}
+            metricBatches={metricBatches}
+            onLoadMoreBatches={loadMoreBatchHistory}
             onOpenBatch={openBatchModal}
+            onVoidBatch={voidBatch}
             onUpdateProtein={updateProtein}
-            proteins={proteins}
+            proteinCatalog={proteins}
             showCosts={showCosts}
             showTargets={showTargets}
+            yieldWindowDays={yieldWindowDays}
           />
         )}
 
         {tab === 'alertas' && (
           <AlertsTab
             alerts={alerts}
-            batches={batches}
+            canCreate={canCreateBatch(role)}
             canEdit={canManageProteins(role)}
+            latestBatches={latestBatches}
+            metricBatches={metricBatches}
             newProtein={newProtein}
             onCreateProtein={createProtein}
-            onDeleteProtein={deleteProtein}
             onOpenBatch={openBatchModal}
             onSetNewProtein={setNewProtein}
             onThresholdChange={saveThreshold}
+            onToggleProtein={toggleProtein}
             onUpdateProtein={updateProtein}
+            onYieldWindowChange={saveYieldWindow}
             proteins={proteins}
             showCosts={showCosts}
             showTargets={showTargets}
             threshold={threshold}
+            yieldWindowDays={yieldWindowDays}
           />
         )}
 
@@ -681,6 +688,7 @@ function Workspace({ session }: { session: Session }) {
             onCreateResponsible={createResponsible}
             onCreateUser={createUser}
             onDeleteResponsible={deleteResponsible}
+            onToggleUser={toggleUser}
             onUpdateRole={updateRole}
             profiles={profiles}
             responsibleOptions={responsibleOptions}
@@ -694,746 +702,12 @@ function Workspace({ session }: { session: Session }) {
           onChange={setBatchForm}
           onClose={() => setModalOpen(false)}
           onSubmit={createBatch}
-          proteins={proteins}
+          proteins={activeProteins}
           responsibleNames={responsibleNames}
           showCosts={showCosts}
           showTargets={showTargets}
         />
       )}
-    </div>
-  )
-}
-
-function Metric({ label, value, tone = '' }: { label: string; value: string; tone?: string }) {
-  return (
-    <div className="strip-item">
-      <span>{label}</span>
-      <strong className={tone}>{value}</strong>
-    </div>
-  )
-}
-
-function ProductionTab({
-  batches,
-  canDelete,
-  canEdit,
-  onDeleteBatch,
-  onOpenBatch,
-  onUpdateProtein,
-  proteins,
-  showCosts,
-  showTargets,
-}: {
-  batches: Batch[]
-  canDelete: boolean
-  canEdit: boolean
-  onDeleteBatch: (batchId: string) => void
-  onOpenBatch: (proteinId?: string) => void
-  onUpdateProtein: (id: string, patch: Partial<Pick<Protein, 'cost' | 'target_yield' | 'active'>>) => void
-  proteins: Protein[]
-  showCosts: boolean
-  showTargets: boolean
-}) {
-  return (
-    <>
-      <div className="section-title">Proteínas cadastradas</div>
-      <section className="proteins-grid">
-        {proteins.map((protein) => (
-          <ProteinCard
-            batches={batches}
-            canEdit={canEdit}
-            key={protein.id}
-            onOpenBatch={onOpenBatch}
-            onUpdateProtein={onUpdateProtein}
-            protein={protein}
-            showCosts={showCosts}
-            showTargets={showTargets}
-          />
-        ))}
-      </section>
-
-      <div className="section-title">Histórico geral de lotes</div>
-      <LogTable
-        batches={batches}
-        canDelete={canDelete}
-        onDeleteBatch={onDeleteBatch}
-        proteins={proteins}
-        showCosts={showCosts}
-        showTargets={showTargets}
-      />
-    </>
-  )
-}
-
-function ProteinCard({
-  batches,
-  canEdit,
-  onOpenBatch,
-  onUpdateProtein,
-  protein,
-  showCosts,
-  showTargets,
-}: {
-  batches: Batch[]
-  canEdit: boolean
-  onOpenBatch: (proteinId?: string) => void
-  onUpdateProtein: (id: string, patch: Partial<Pick<Protein, 'cost' | 'target_yield' | 'active'>>) => void
-  protein: Protein
-  showCosts: boolean
-  showTargets: boolean
-}) {
-  const rows = batchesForProtein(batches, protein.id)
-  const avg = averageYield(batches, protein.id)
-  const last = lastBatch(batches, protein.id)
-  const status = showTargets ? rendStatus(avg, protein.target_yield) : 'virgin'
-  const producedToday = rows
-    .filter((batch) => isSameDay(new Date(batch.recorded_at), new Date()))
-    .reduce((sum, batch) => sum + batch.net_kg, 0)
-  const realCost = showCosts && protein.cost && avg ? protein.cost / (avg / 100) : null
-
-  return (
-    <article className={`protein-card ${status}`}>
-      <div className="card-accent" />
-      <div className="card-body">
-        <div className="card-header">
-          <div>
-            <h2>{protein.name}</h2>
-            <span>{rows.length} lote{rows.length === 1 ? '' : 's'} registrado{rows.length === 1 ? '' : 's'}</span>
-          </div>
-          {showTargets && <span className={`status-pill ${status}`}>{statusLabel(status)}</span>}
-        </div>
-
-        <div className={`metrics-grid ${showTargets ? '' : 'two'}`}>
-          <MiniMetric label="Média" value={fmtPct(avg)} tone={status} />
-          {showTargets && <MiniMetric label="Meta" value={fmtPct(protein.target_yield)} />}
-          <MiniMetric label="Hoje" value={fmtKg(producedToday)} />
-        </div>
-
-        <div className="gauge">
-          <div className="gauge-labels">
-            <span>0%</span>
-            {showTargets && <span>Meta {fmtPct(protein.target_yield)}</span>}
-            <span>100%</span>
-          </div>
-          <div className="gauge-track">
-            <div className={`gauge-fill ${status}`} style={{ width: `${Math.min(avg ?? 0, 100)}%` }} />
-            {showTargets && protein.target_yield !== null && (
-              <div className="gauge-target" style={{ left: `${Math.min(protein.target_yield, 100)}%` }} />
-            )}
-          </div>
-        </div>
-
-        {showTargets && (
-          <div className="target-row">
-            <span>Meta de rendimento</span>
-            <input
-              disabled={!canEdit}
-              max={100}
-              min={1}
-              onBlur={(event) => onUpdateProtein(protein.id, { target_yield: Number(event.target.value) })}
-              type="number"
-              defaultValue={protein.target_yield ?? ''}
-            />
-            <span>%</span>
-          </div>
-        )}
-
-        <footer className="card-footer">
-          <div>
-            {showCosts && (
-              <>
-                <span>Custo bruto {protein.cost ? `${fmtBRL(protein.cost)}/kg` : '-'}</span>
-                <strong>Custo real {realCost ? `${fmtBRL(realCost)}/kg` : '-'}</strong>
-              </>
-            )}
-            {last && <small>Último lote: {new Date(last.recorded_at).toLocaleString('pt-BR')}</small>}
-          </div>
-          <button className="small-action" type="button" onClick={() => onOpenBatch(protein.id)}>
-            <Plus size={15} />
-            Produção
-          </button>
-        </footer>
-      </div>
-    </article>
-  )
-}
-
-function MiniMetric({ label, value, tone = '' }: { label: string; value: string; tone?: string }) {
-  return (
-    <div className="mini-metric">
-      <span>{label}</span>
-      <strong className={tone}>{value}</strong>
-    </div>
-  )
-}
-
-function LogTable({
-  batches,
-  canDelete,
-  onDeleteBatch,
-  proteins,
-  showCosts,
-  showTargets,
-}: {
-  batches: Batch[]
-  canDelete: boolean
-  onDeleteBatch: (batchId: string) => void
-  proteins: Protein[]
-  showCosts: boolean
-  showTargets: boolean
-}) {
-  const byId = new Map(proteins.map((protein) => [protein.id, protein]))
-  const columnCount = 7 + (showCosts ? 1 : 0) + (canDelete ? 1 : 0)
-
-  return (
-    <section className="table-shell">
-      <table>
-        <thead>
-          <tr>
-            <th>Data / hora</th>
-            <th>Proteína</th>
-            <th>Bruto</th>
-            <th>Líquido</th>
-            <th>Rendimento</th>
-            {showCosts && <th>Custo real</th>}
-            <th>Turno</th>
-            <th>Obs.</th>
-            {canDelete && <th />}
-          </tr>
-        </thead>
-        <tbody>
-          {batches.length === 0 && (
-            <tr>
-              <td className="empty-state" colSpan={columnCount}>
-                Nenhum lote registrado ainda.
-              </td>
-            </tr>
-          )}
-          {batches.map((batch) => {
-            const protein = byId.get(batch.protein_id)
-            const status = showTargets ? rendStatus(batch.yield_pct, protein?.target_yield) : 'virgin'
-            return (
-              <tr key={batch.id}>
-                <td>{new Date(batch.recorded_at).toLocaleString('pt-BR')}</td>
-                <td>{protein?.name ?? 'Removida'}</td>
-                <td>{fmtKg(batch.gross_kg)}</td>
-                <td>{fmtKg(batch.net_kg)}</td>
-                <td>
-                  <span className={`rend-cell ${status}`}>{fmtPct(batch.yield_pct)}</span>
-                </td>
-                {showCosts && <td>{batch.real_cost_kg ? fmtBRL(batch.real_cost_kg) : '-'}</td>}
-                <td>{batch.shift}</td>
-                <td>{batch.notes || '-'}</td>
-                {canDelete && (
-                  <td>
-                    <button className="icon-btn danger" type="button" onClick={() => onDeleteBatch(batch.id)} title="Excluir">
-                      <Trash2 size={15} />
-                    </button>
-                  </td>
-                )}
-              </tr>
-            )
-          })}
-        </tbody>
-      </table>
-    </section>
-  )
-}
-
-function AlertsTab({
-  alerts,
-  batches,
-  canEdit,
-  newProtein,
-  onCreateProtein,
-  onDeleteProtein,
-  onOpenBatch,
-  onSetNewProtein,
-  onThresholdChange,
-  onUpdateProtein,
-  proteins,
-  showCosts,
-  showTargets,
-  threshold,
-}: {
-  alerts: ReturnType<typeof buildAlerts>
-  batches: Batch[]
-  canEdit: boolean
-  newProtein: { name: string; cost: string; target: string }
-  onCreateProtein: (event: FormEvent) => void
-  onDeleteProtein: (protein: Protein) => void
-  onOpenBatch: (proteinId?: string) => void
-  onSetNewProtein: (value: { name: string; cost: string; target: string }) => void
-  onThresholdChange: (value: number) => void
-  onUpdateProtein: (id: string, patch: Partial<Pick<Protein, 'cost' | 'target_yield' | 'active'>>) => void
-  proteins: Protein[]
-  showCosts: boolean
-  showTargets: boolean
-  threshold: number
-}) {
-  return (
-    <section className="alerts-layout">
-      <div className="alerts-column">
-        <div className="alerts-header">
-          <h2>Alertas ativos</h2>
-          <label>
-            Sem produção há
-            <input
-              disabled={!canEdit}
-              min={1}
-              onBlur={(event) => onThresholdChange(Number(event.target.value))}
-              type="number"
-              defaultValue={threshold}
-            />
-            dia(s)
-          </label>
-        </div>
-        <div className="alerts-list">
-          {alerts.length === 0 && (
-            <div className="empty-alerts">
-              <Eye size={28} />
-              Tudo em ordem no momento.
-            </div>
-          )}
-          {alerts.map((alert) => (
-            <article className={`alert-card ${alert.severity}`} key={`${alert.proteinId}-${alert.title}`}>
-              <AlertTriangle size={22} />
-              <div>
-                <strong>{alert.title}</strong>
-                <p>{alert.desc}</p>
-                <button type="button" onClick={() => onOpenBatch(alert.proteinId)}>
-                  <Plus size={14} />
-                  Registrar produção
-                </button>
-              </div>
-            </article>
-          ))}
-        </div>
-      </div>
-
-      <div className="overview-column">
-        <div className="section-title">Tabela geral</div>
-        <section className="table-shell">
-          <table>
-            <thead>
-              <tr>
-                <th>Proteína</th>
-                <th>Último lote</th>
-                <th>Dias</th>
-                <th>Rend. médio</th>
-                {showTargets && <th>Meta</th>}
-                {showCosts && <th>Custo bruto</th>}
-                {showCosts && <th>Custo real</th>}
-                {showTargets && <th>Status</th>}
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {proteins.map((protein) => {
-                const avg = averageYield(batches, protein.id)
-                const last = lastBatch(batches, protein.id)
-                const days = daysSince(last?.recorded_at)
-                const status = showTargets ? rendStatus(avg, protein.target_yield) : 'virgin'
-                const realCost = showCosts && protein.cost && avg ? protein.cost / (avg / 100) : null
-
-                return (
-                  <tr key={protein.id}>
-                    <td className="strong-cell">{protein.name}</td>
-                    <td>{last ? new Date(last.recorded_at).toLocaleString('pt-BR') : '-'}</td>
-                    <td>{days === null ? 'Nunca' : days === 0 ? 'Hoje' : `${days}d`}</td>
-                    <td>
-                      <span className={`rend-cell ${status}`}>{fmtPct(avg)}</span>
-                    </td>
-                    {showTargets && (
-                      <td>
-                        <input
-                          className="table-input"
-                          disabled={!canEdit}
-                          onBlur={(event) => onUpdateProtein(protein.id, { target_yield: Number(event.target.value) })}
-                          type="number"
-                          defaultValue={protein.target_yield ?? ''}
-                        />
-                      </td>
-                    )}
-                    {showCosts && (
-                      <td>
-                        <input
-                          className="table-input"
-                          disabled={!canEdit}
-                          onBlur={(event) => onUpdateProtein(protein.id, { cost: Number(event.target.value) })}
-                          type="number"
-                          step="0.01"
-                          defaultValue={protein.cost ?? ''}
-                        />
-                      </td>
-                    )}
-                    {showCosts && <td>{realCost ? fmtBRL(realCost) : '-'}</td>}
-                    {showTargets && (
-                      <td>
-                        <span className={`status-pill ${status}`}>{statusLabel(status)}</span>
-                      </td>
-                    )}
-                    <td className="row-actions">
-                      <button className="icon-btn" type="button" onClick={() => onOpenBatch(protein.id)} title="Nova produção">
-                        <Plus size={15} />
-                      </button>
-                      {canEdit && (
-                        <button
-                          className="icon-btn danger"
-                          type="button"
-                          onClick={() => onDeleteProtein(protein)}
-                          title="Remover proteína"
-                        >
-                          <Trash2 size={15} />
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </section>
-
-        {canEdit && (
-          <form className="add-protein-form" onSubmit={onCreateProtein}>
-            <input
-              placeholder="Nova proteína"
-              value={newProtein.name}
-              onChange={(event) => onSetNewProtein({ ...newProtein, name: event.target.value })}
-            />
-            <input
-              placeholder="Custo R$/kg"
-              type="number"
-              step="0.01"
-              value={newProtein.cost}
-              onChange={(event) => onSetNewProtein({ ...newProtein, cost: event.target.value })}
-            />
-            <input
-              placeholder="Meta %"
-              type="number"
-              value={newProtein.target}
-              onChange={(event) => onSetNewProtein({ ...newProtein, target: event.target.value })}
-            />
-            <button className="small-action" type="submit">
-              <Plus size={15} />
-              Adicionar
-            </button>
-          </form>
-        )}
-      </div>
-    </section>
-  )
-}
-
-function AccessTab({
-  currentUserId,
-  onCreateResponsible,
-  onCreateUser,
-  onDeleteResponsible,
-  onUpdateRole,
-  profiles,
-  responsibleOptions,
-}: {
-  currentUserId: string
-  onCreateResponsible: (name: string) => Promise<boolean>
-  onCreateUser: (newUser: NewUserForm) => Promise<boolean>
-  onDeleteResponsible: (responsible: ResponsibleOption) => void
-  onUpdateRole: (userId: string, role: Role) => void
-  profiles: Profile[]
-  responsibleOptions: ResponsibleOption[]
-}) {
-  const [newUser, setNewUser] = useState<NewUserForm>(emptyNewUserForm)
-  const [newResponsible, setNewResponsible] = useState('')
-  const [creating, setCreating] = useState(false)
-  const [creatingResponsible, setCreatingResponsible] = useState(false)
-
-  async function submitNewUser(event: FormEvent) {
-    event.preventDefault()
-    setCreating(true)
-    const created = await onCreateUser(newUser)
-    if (created) {
-      setNewUser(emptyNewUserForm)
-    }
-    setCreating(false)
-  }
-
-  async function submitResponsible(event: FormEvent) {
-    event.preventDefault()
-    setCreatingResponsible(true)
-    const created = await onCreateResponsible(newResponsible)
-    if (created) {
-      setNewResponsible('')
-    }
-    setCreatingResponsible(false)
-  }
-
-  return (
-    <section className="access-panel">
-      <div className="section-title">Níveis de acesso</div>
-      <div className="role-help">
-        <span>
-          <Shield size={16} /> Admin gerencia usuários e dados.
-        </span>
-        <span>
-          <Edit3 size={16} /> Gestor edita proteínas e lotes.
-        </span>
-        <span>
-          <Save size={16} /> Operador registra lotes.
-        </span>
-        <span>
-          <Eye size={16} /> Leitor apenas consulta.
-        </span>
-      </div>
-
-      <form className="add-user-form" onSubmit={submitNewUser}>
-        <div className="section-title compact">Novo usuário</div>
-        <div className="user-form-grid">
-          <label>
-            Nome
-            <input
-              autoComplete="name"
-              value={newUser.fullName}
-              onChange={(event) => setNewUser({ ...newUser, fullName: event.target.value })}
-            />
-          </label>
-          <label>
-            E-mail
-            <input
-              autoComplete="email"
-              required
-              type="email"
-              value={newUser.email}
-              onChange={(event) => setNewUser({ ...newUser, email: event.target.value })}
-            />
-          </label>
-          <label>
-            Senha
-            <input
-              autoComplete="new-password"
-              minLength={6}
-              required
-              type="password"
-              value={newUser.password}
-              onChange={(event) => setNewUser({ ...newUser, password: event.target.value })}
-            />
-          </label>
-          <label>
-            Nível
-            <select value={newUser.role} onChange={(event) => setNewUser({ ...newUser, role: event.target.value as Role })}>
-              {roles.map((role) => (
-                <option key={role} value={role}>
-                  {roleLabel(role)}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-        <button className="small-action" type="submit" disabled={creating}>
-          <UserPlus size={15} />
-          {creating ? 'Cadastrando...' : 'Cadastrar usuário'}
-        </button>
-      </form>
-
-      <section className="responsibles-panel">
-        <div className="section-title compact">Responsáveis da produção</div>
-        <form className="responsible-form" onSubmit={submitResponsible}>
-          <input
-            placeholder="Nome do responsável"
-            value={newResponsible}
-            onChange={(event) => setNewResponsible(event.target.value)}
-          />
-          <button className="small-action" type="submit" disabled={creatingResponsible}>
-            <Plus size={15} />
-            {creatingResponsible ? 'Cadastrando...' : 'Cadastrar'}
-          </button>
-        </form>
-        <div className="responsibles-list">
-          {responsibleOptions.map((responsible) => (
-            <div className="responsible-row" key={responsible.id}>
-              <span>{responsible.name}</span>
-              <button
-                className="icon-btn danger"
-                type="button"
-                onClick={() => onDeleteResponsible(responsible)}
-                title="Descadastrar responsável"
-              >
-                <Trash2 size={15} />
-              </button>
-            </div>
-          ))}
-          {responsibleOptions.length === 0 && <p className="empty-responsibles">Nenhum responsável cadastrado.</p>}
-        </div>
-      </section>
-
-      <section className="table-shell">
-        <table>
-          <thead>
-            <tr>
-              <th>Usuário</th>
-              <th>E-mail</th>
-              <th>Nível</th>
-              <th>Entrada</th>
-            </tr>
-          </thead>
-          <tbody>
-            {profiles.map((profile) => (
-              <tr key={profile.id}>
-                <td>{profile.full_name || '-'}</td>
-                <td>{profile.email}</td>
-                <td>
-                  <select
-                    disabled={profile.id === currentUserId}
-                    onChange={(event) => onUpdateRole(profile.id, event.target.value as Role)}
-                    value={profile.role}
-                  >
-                    {roles.map((role) => (
-                      <option key={role} value={role}>
-                        {roleLabel(role)}
-                      </option>
-                    ))}
-                  </select>
-                </td>
-                <td>{new Date(profile.created_at).toLocaleDateString('pt-BR')}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </section>
-    </section>
-  )
-}
-
-function BatchModal({
-  form,
-  onChange,
-  onClose,
-  onSubmit,
-  proteins,
-  responsibleNames,
-  showCosts,
-  showTargets,
-}: {
-  form: BatchForm
-  onChange: (form: BatchForm) => void
-  onClose: () => void
-  onSubmit: (event: FormEvent) => void
-  proteins: Protein[]
-  responsibleNames: string[]
-  showCosts: boolean
-  showTargets: boolean
-}) {
-  const protein = proteins.find((item) => item.id === form.proteinId)
-  const gross = Number(form.grossKg)
-  const net = Number(form.netKg)
-  const yieldPct = gross > 0 && net > 0 && net <= gross ? (net / gross) * 100 : null
-  const realCost = showCosts && protein?.cost && yieldPct ? protein.cost / (yieldPct / 100) : null
-
-  return (
-    <div className="overlay" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <form className="modal" onSubmit={onSubmit}>
-        <header className="modal-header">
-          <div>
-            <h2>Nova produção</h2>
-            <span>
-              {protein
-                ? showCosts && protein.cost
-                  ? `${protein.name} · ${fmtBRL(protein.cost)}/kg bruto`
-                  : protein.name
-                : 'Selecione a proteína'}
-            </span>
-          </div>
-          <button className="icon-btn ghost" type="button" onClick={onClose} title="Fechar">
-            <X size={18} />
-          </button>
-        </header>
-
-        <div className="modal-body">
-          <label className="field-label">Proteína</label>
-          <div className="protein-chips">
-            {proteins.map((item) => (
-              <button
-                className={form.proteinId === item.id ? 'active' : ''}
-                key={item.id}
-                type="button"
-                onClick={() => onChange({ ...form, proteinId: item.id })}
-              >
-                {item.name}
-              </button>
-            ))}
-          </div>
-
-          <div className="form-grid two">
-            <label>
-              Bruto (kg)
-              <input
-                min={0}
-                onChange={(event) => onChange({ ...form, grossKg: event.target.value })}
-                step="0.001"
-                type="number"
-                value={form.grossKg}
-              />
-            </label>
-            <label>
-              Líquido (kg)
-              <input
-                min={0}
-                onChange={(event) => onChange({ ...form, netKg: event.target.value })}
-                step="0.001"
-                type="number"
-                value={form.netKg}
-              />
-            </label>
-          </div>
-
-          <div className={`live-calc ${showCosts ? '' : 'two'}`}>
-            <MiniMetric
-              label="Rendimento"
-              value={fmtPct(yieldPct)}
-              tone={showTargets ? rendStatus(yieldPct, protein?.target_yield) : 'virgin'}
-            />
-            <MiniMetric label="Perda" value={yieldPct ? fmtKg(gross - net) : '-'} />
-            {showCosts && <MiniMetric label="Custo real" value={realCost ? fmtBRL(realCost) : '-'} />}
-          </div>
-
-          <div className="form-grid two">
-            <label>
-              Turno
-              <select value={form.shift} onChange={(event) => onChange({ ...form, shift: event.target.value as Batch['shift'] })}>
-                <option value="manha">Manhã</option>
-                <option value="tarde">Tarde</option>
-              </select>
-            </label>
-            <label>
-              Responsável
-              <select required value={form.responsible} onChange={(event) => onChange({ ...form, responsible: event.target.value })}>
-                <option value="">Selecione</option>
-                {responsibleNames.map((name) => (
-                  <option key={name} value={name}>
-                    {name}
-                  </option>
-                ))}
-                <option value={otherResponsibleValue}>{otherResponsibleLabel}</option>
-              </select>
-            </label>
-          </div>
-
-          <label>
-            Observações
-            <textarea value={form.notes} onChange={(event) => onChange({ ...form, notes: event.target.value })} rows={3} />
-          </label>
-        </div>
-
-        <footer className="modal-footer">
-          <button className="secondary-btn" type="button" onClick={onClose}>
-            Cancelar
-          </button>
-          <button className="primary-btn" type="submit">
-            <Save size={18} />
-            Salvar produção
-          </button>
-        </footer>
-      </form>
     </div>
   )
 }

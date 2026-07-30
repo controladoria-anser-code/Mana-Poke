@@ -11,7 +11,7 @@ export function canCreateBatch(role: Role) {
   return roleRank[role] >= roleRank.operador
 }
 
-export function canDeleteBatch(role: Role) {
+export function canVoidBatch(role: Role) {
   return roleRank[role] >= roleRank.gestor
 }
 

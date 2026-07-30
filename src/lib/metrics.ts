@@ -1,5 +1,7 @@
 import type { Batch, Protein } from '../types'
 
+export const BUSINESS_TIME_ZONE = 'America/Fortaleza'
+
 export function fmtBRL(value: number) {
   return value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
 }
@@ -27,13 +29,19 @@ export function statusLabel(status: string) {
 }
 
 export function batchesForProtein(batches: Batch[], proteinId: string) {
-  return batches.filter((batch) => batch.protein_id === proteinId)
+  return batches.filter((batch) => batch.protein_id === proteinId && !batch.voided_at)
+}
+
+export function weightedYield(batches: Batch[]) {
+  const validBatches = batches.filter((batch) => !batch.voided_at)
+  const grossKg = validBatches.reduce((sum, batch) => sum + batch.gross_kg, 0)
+  if (grossKg <= 0) return null
+  const netKg = validBatches.reduce((sum, batch) => sum + batch.net_kg, 0)
+  return (netKg / grossKg) * 100
 }
 
 export function averageYield(batches: Batch[], proteinId: string) {
-  const rows = batchesForProtein(batches, proteinId)
-  if (!rows.length) return null
-  return rows.reduce((sum, batch) => sum + batch.yield_pct, 0) / rows.length
+  return weightedYield(batchesForProtein(batches, proteinId))
 }
 
 export function lastBatch(batches: Batch[], proteinId: string) {
@@ -42,29 +50,52 @@ export function lastBatch(batches: Batch[], proteinId: string) {
   )[0]
 }
 
-export function isSameDay(dateA: Date, dateB: Date) {
-  return (
-    dateA.getFullYear() === dateB.getFullYear() &&
-    dateA.getMonth() === dateB.getMonth() &&
-    dateA.getDate() === dateB.getDate()
-  )
+function dateParts(date: Date, timeZone = BUSINESS_TIME_ZONE) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    day: '2-digit',
+    month: '2-digit',
+    timeZone,
+    year: 'numeric',
+  }).formatToParts(date)
+
+  const value = (type: Intl.DateTimeFormatPartTypes) => Number(parts.find((part) => part.type === type)?.value)
+  return { day: value('day'), month: value('month'), year: value('year') }
 }
 
-export function daysSince(dateIso?: string) {
+export function isSameDay(dateA: Date, dateB: Date, timeZone = BUSINESS_TIME_ZONE) {
+  const a = dateParts(dateA, timeZone)
+  const b = dateParts(dateB, timeZone)
+  return a.year === b.year && a.month === b.month && a.day === b.day
+}
+
+export function daysSince(dateIso?: string, now = new Date(), timeZone = BUSINESS_TIME_ZONE) {
   if (!dateIso) return null
-  const then = new Date(dateIso)
-  const today = new Date()
-  then.setHours(0, 0, 0, 0)
-  today.setHours(0, 0, 0, 0)
-  return Math.floor((today.getTime() - then.getTime()) / 86_400_000)
+  const then = dateParts(new Date(dateIso), timeZone)
+  const today = dateParts(now, timeZone)
+  const thenDay = Date.UTC(then.year, then.month - 1, then.day)
+  const todayDay = Date.UTC(today.year, today.month - 1, today.day)
+  return Math.floor((todayDay - thenDay) / 86_400_000)
 }
 
-export function buildAlerts(proteins: Protein[], batches: Batch[], thresholdDays: number, includeTargetAlerts = true) {
+export function startOfMetricWindow(windowDays: number, now = new Date()) {
+  const start = new Date(now)
+  start.setDate(start.getDate() - Math.max(1, Math.floor(windowDays)))
+  return start
+}
+
+export function buildAlerts(
+  proteins: Protein[],
+  metricBatches: Batch[],
+  latestBatches: Batch[],
+  thresholdDays: number,
+  includeTargetAlerts = true,
+  now = new Date(),
+) {
   return proteins.flatMap((protein) => {
     const alerts: Array<{ severity: 'danger' | 'warn'; title: string; desc: string; proteinId: string }> = []
-    const avg = averageYield(batches, protein.id)
-    const last = lastBatch(batches, protein.id)
-    const days = daysSince(last?.recorded_at)
+    const avg = averageYield(metricBatches, protein.id)
+    const last = lastBatch(latestBatches, protein.id)
+    const days = daysSince(last?.recorded_at, now)
 
     if (days === null) {
       alerts.push({
@@ -77,7 +108,7 @@ export function buildAlerts(proteins: Protein[], batches: Batch[], thresholdDays
       alerts.push({
         severity: 'danger',
         title: `${protein.name} parado há ${days} dia${days > 1 ? 's' : ''}`,
-        desc: `Último lote acima do limite configurado de ${thresholdDays} dia${thresholdDays > 1 ? 's' : ''}.`,
+        desc: `Último lote atingiu o limite configurado de ${thresholdDays} dia${thresholdDays > 1 ? 's' : ''}.`,
         proteinId: protein.id,
       })
     }

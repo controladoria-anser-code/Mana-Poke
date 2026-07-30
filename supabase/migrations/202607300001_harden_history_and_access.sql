@@ -1,64 +1,93 @@
-create extension if not exists pgcrypto;
+-- Migração segura para instalações criadas pelo schema anterior.
+-- Preserva lotes existentes e congela neles o custo atual disponível no momento da migração.
 
-create table if not exists public.profiles (
-  id uuid primary key references auth.users(id) on delete cascade,
-  email text not null,
-  full_name text,
-  role text not null default 'operador' check (role in ('admin', 'gestor', 'operador', 'viewer')),
-  enabled boolean not null default false,
-  created_at timestamptz not null default now()
-);
+-- O SQL Editor pode estar configurado para simular o papel "authenticated".
+-- Retorna ao papel da conexão antes de executar alterações de estrutura.
+reset role;
 
-create table if not exists public.proteins (
-  id uuid primary key default gen_random_uuid(),
-  slug text not null unique,
-  name text not null,
-  cost numeric(10, 2) not null check (cost > 0),
-  target_yield numeric(5, 2) not null check (target_yield > 0 and target_yield <= 100),
-  active boolean not null default true,
-  created_by uuid references auth.users(id) on delete set null default auth.uid(),
-  created_at timestamptz not null default now()
-);
+begin;
 
-create table if not exists public.batches (
-  id uuid primary key default gen_random_uuid(),
-  protein_id uuid not null references public.proteins(id) on delete restrict,
-  gross_kg numeric(10, 3) not null check (gross_kg > 0),
-  net_kg numeric(10, 3) not null check (net_kg > 0 and net_kg <= gross_kg),
-  yield_pct numeric(6, 3) not null check (yield_pct > 0 and yield_pct <= 100),
-  protein_cost_snapshot numeric(10, 2) not null check (protein_cost_snapshot > 0),
-  real_cost_kg numeric(10, 2) not null check (real_cost_kg > 0),
-  shift text not null check (shift in ('manha', 'tarde')),
-  responsible text not null check (length(btrim(responsible)) > 0),
-  notes text,
-  recorded_at timestamptz not null default now(),
-  created_by uuid references auth.users(id) on delete set null default auth.uid(),
-  voided_at timestamptz,
-  voided_by uuid references auth.users(id) on delete set null,
-  void_reason text,
-  updated_at timestamptz not null default now(),
-  constraint batches_void_state_check check (
+drop view if exists public.latest_batches_for_current_user;
+drop view if exists public.batches_for_current_user;
+drop view if exists public.proteins_for_current_user;
+
+drop trigger if exists refresh_batch_costs_after_protein_update on public.proteins;
+drop function if exists public.refresh_batch_costs_after_protein_update();
+
+alter table public.profiles
+  add column if not exists enabled boolean not null default true;
+alter table public.profiles
+  alter column enabled set default false;
+
+alter table public.batches
+  add column if not exists protein_cost_snapshot numeric(10, 2),
+  add column if not exists voided_at timestamptz,
+  add column if not exists voided_by uuid,
+  add column if not exists void_reason text,
+  add column if not exists updated_at timestamptz not null default now();
+
+update public.batches as batch
+set
+  protein_cost_snapshot = protein.cost,
+  real_cost_kg = protein.cost / (batch.yield_pct / 100)
+from public.proteins as protein
+where protein.id = batch.protein_id
+  and batch.protein_cost_snapshot is null;
+
+update public.batches
+set responsible = 'Não informado'
+where responsible is null
+  or length(btrim(responsible)) = 0;
+
+alter table public.batches
+  alter column protein_cost_snapshot set not null,
+  alter column responsible set not null;
+
+alter table public.batches drop constraint if exists batches_protein_cost_snapshot_check;
+alter table public.batches
+  add constraint batches_protein_cost_snapshot_check check (protein_cost_snapshot > 0);
+
+alter table public.batches drop constraint if exists batches_responsible_check;
+alter table public.batches
+  add constraint batches_responsible_check check (length(btrim(responsible)) > 0);
+
+alter table public.batches drop constraint if exists batches_void_state_check;
+alter table public.batches
+  add constraint batches_void_state_check check (
     (voided_at is null and void_reason is null)
     or
     (voided_at is not null and length(btrim(void_reason)) >= 3)
-  )
-);
+  );
 
-create table if not exists public.app_settings (
-  key text primary key,
-  value text not null,
-  updated_at timestamptz not null default now()
-);
+alter table public.batches drop constraint if exists batches_protein_id_fkey;
+alter table public.batches
+  add constraint batches_protein_id_fkey
+  foreign key (protein_id) references public.proteins(id) on delete restrict;
 
-create table if not exists public.production_responsibles (
-  id uuid primary key default gen_random_uuid(),
-  name text not null check (length(btrim(name)) > 0),
-  created_by uuid references auth.users(id) on delete set null default auth.uid(),
-  created_at timestamptz not null default now()
-);
+alter table public.proteins drop constraint if exists proteins_created_by_fkey;
+alter table public.proteins
+  add constraint proteins_created_by_fkey
+  foreign key (created_by) references auth.users(id) on delete set null;
 
-create unique index if not exists production_responsibles_name_unique
-  on public.production_responsibles (lower(btrim(name)));
+alter table public.batches drop constraint if exists batches_created_by_fkey;
+alter table public.batches
+  add constraint batches_created_by_fkey
+  foreign key (created_by) references auth.users(id) on delete set null;
+
+alter table public.batches drop constraint if exists batches_voided_by_fkey;
+alter table public.batches
+  add constraint batches_voided_by_fkey
+  foreign key (voided_by) references auth.users(id) on delete set null;
+
+alter table public.production_responsibles drop constraint if exists production_responsibles_created_by_fkey;
+alter table public.production_responsibles
+  add constraint production_responsibles_created_by_fkey
+  foreign key (created_by) references auth.users(id) on delete set null;
+
+alter table public.production_responsibles drop constraint if exists production_responsibles_name_check;
+alter table public.production_responsibles
+  add constraint production_responsibles_name_check check (length(btrim(name)) > 0);
+
 create index if not exists batches_recorded_at_idx
   on public.batches (recorded_at desc);
 create index if not exists batches_protein_recorded_at_idx
@@ -172,9 +201,6 @@ drop trigger if exists set_batch_calculated_fields on public.batches;
 create trigger set_batch_calculated_fields
   before insert on public.batches
   for each row execute function public.set_batch_calculated_fields();
-
-drop trigger if exists refresh_batch_costs_after_protein_update on public.proteins;
-drop function if exists public.refresh_batch_costs_after_protein_update();
 
 create or replace function public.protect_batch_immutable_fields()
 returns trigger
@@ -326,20 +352,14 @@ begin
 end;
 $$;
 
-alter table public.profiles enable row level security;
-alter table public.proteins enable row level security;
-alter table public.batches enable row level security;
-alter table public.app_settings enable row level security;
-alter table public.production_responsibles enable row level security;
+drop policy if exists "profiles_insert_own" on public.profiles;
+drop policy if exists "profiles_update_admin" on public.profiles;
 
 drop policy if exists "profiles_select_own_or_admin" on public.profiles;
 create policy "profiles_select_own_or_admin"
 on public.profiles for select
 to authenticated
 using (auth.uid() = id or public.current_user_role() = 'admin');
-
-drop policy if exists "profiles_insert_own" on public.profiles;
-drop policy if exists "profiles_update_admin" on public.profiles;
 
 drop policy if exists "responsibles_select_authenticated" on public.production_responsibles;
 create policy "responsibles_select_authenticated"
@@ -414,7 +434,7 @@ to authenticated
 using (public.current_user_role() in ('admin', 'gestor'))
 with check (public.current_user_role() in ('admin', 'gestor'));
 
-create or replace view public.proteins_for_current_user
+create view public.proteins_for_current_user
 with (security_barrier = true)
 as
 select
@@ -434,7 +454,7 @@ select
 from public.proteins
 where public.current_user_role() is not null;
 
-create or replace view public.batches_for_current_user
+create view public.batches_for_current_user
 with (security_barrier = true)
 as
 select
@@ -463,7 +483,7 @@ select
 from public.batches
 where public.current_user_role() is not null;
 
-create or replace view public.latest_batches_for_current_user
+create view public.latest_batches_for_current_user
 with (security_barrier = true)
 as
 select distinct on (protein_id)
@@ -556,29 +576,7 @@ grant execute on function public.set_user_role(uuid, text) to authenticated;
 grant execute on function public.set_user_enabled(uuid, boolean) to authenticated;
 
 insert into public.app_settings (key, value)
-values
-  ('alert_threshold', '1'),
-  ('yield_window_days', '30')
+values ('yield_window_days', '30')
 on conflict (key) do nothing;
 
-insert into public.production_responsibles (name)
-select name
-from (values ('Cássia'), ('Adriano'), ('Edelmara')) as seed(name)
-where not exists (
-  select 1
-  from public.production_responsibles
-  where lower(btrim(production_responsibles.name)) = lower(btrim(seed.name))
-);
-
-insert into public.proteins (slug, name, cost, target_yield)
-values
-  ('atum', 'Atum Frozen', 67.70, 85),
-  ('salmao', 'Salmão c/ pele congelado', 74.00, 75),
-  ('stpeter', 'St Peter sem pele resfriado', 42.70, 90),
-  ('camarao', 'Camarão', 70.00, 65),
-  ('frango', 'Frango', 16.58, 80),
-  ('tofu', 'Tofu', 32.00, 95),
-  ('kani', 'Kani Kama', 35.90, 95),
-  ('edamame', 'Edamame em grãos', 32.50, 88),
-  ('shimeji', 'Shimeji Branco', 50.00, 82)
-on conflict (slug) do nothing;
+commit;

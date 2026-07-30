@@ -5,6 +5,7 @@ export type Profile = {
   email: string
   full_name: string | null
   role: Role
+  enabled: boolean
   created_at: string
 }
 
@@ -24,15 +25,42 @@ export type Batch = {
   gross_kg: number
   net_kg: number
   yield_pct: number
+  protein_cost_snapshot: number | null
   real_cost_kg: number | null
   shift: 'manha' | 'tarde'
   responsible: string | null
   notes: string | null
   recorded_at: string
   created_by: string | null
+  voided_at: string | null
+  voided_by: string | null
+  void_reason: string | null
+  updated_at: string
 }
 
 export type AppSetting = {
   key: string
   value: string
+}
+
+export type ResponsibleOption = {
+  id: string
+  name: string
+  created_at: string
+}
+
+export type BatchForm = {
+  proteinId: string
+  grossKg: string
+  netKg: string
+  shift: Batch['shift']
+  responsible: string
+  notes: string
+}
+
+export type NewUserForm = {
+  fullName: string
+  email: string
+  password: string
+  role: Role
 }
