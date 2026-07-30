@@ -551,6 +551,8 @@ revoke all on function public.set_user_role(uuid, text) from public, anon;
 revoke all on function public.set_user_enabled(uuid, boolean) from public, anon;
 
 grant execute on function public.current_user_role() to authenticated;
+grant execute on function public.current_user_can_view_costs() to authenticated;
+grant execute on function public.current_user_can_view_targets() to authenticated;
 grant execute on function public.void_batch(uuid, text) to authenticated;
 grant execute on function public.set_user_role(uuid, text) to authenticated;
 grant execute on function public.set_user_enabled(uuid, boolean) to authenticated;

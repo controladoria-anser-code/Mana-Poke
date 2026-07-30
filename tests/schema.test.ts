@@ -30,6 +30,15 @@ describe('contratos de segurança do schema', () => {
     expect(schema).not.toContain('grant update (yield_pct')
     expect(schema).not.toContain('grant delete on public.batches')
   })
+
+  it('permite executar as funções auxiliares usadas pelas views', () => {
+    expect(schema).toContain(
+      'grant execute on function public.current_user_can_view_costs() to authenticated;',
+    )
+    expect(schema).toContain(
+      'grant execute on function public.current_user_can_view_targets() to authenticated;',
+    )
+  })
 })
 
 describe('migração da instalação existente', () => {
