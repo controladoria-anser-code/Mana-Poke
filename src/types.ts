@@ -58,6 +58,18 @@ export type BatchForm = {
   notes: string
 }
 
+export type BatchEditLog = {
+  id: string
+  batch_id: string
+  edited_by: string | null
+  editor_name: string
+  reason: string
+  changed_fields: string[]
+  before_data: Record<string, unknown>
+  after_data: Record<string, unknown>
+  edited_at: string
+}
+
 export type NewUserForm = {
   fullName: string
   email: string

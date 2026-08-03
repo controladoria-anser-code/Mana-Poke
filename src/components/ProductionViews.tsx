@@ -1,5 +1,5 @@
 import { type FormEvent, useEffect } from 'react'
-import { Archive, Plus, RefreshCw, Save, X } from 'lucide-react'
+import { Archive, History, Pencil, Plus, RefreshCw, Save, X } from 'lucide-react'
 import {
   BUSINESS_TIME_ZONE,
   averageYield,
@@ -12,7 +12,7 @@ import {
   rendStatus,
   statusLabel,
 } from '../lib/metrics'
-import type { Batch, BatchForm, Protein } from '../types'
+import type { Batch, BatchEditLog, BatchForm, Protein } from '../types'
 
 export function Metric({ label, value, tone = '' }: { label: string; value: string; tone?: string }) {
   return (
@@ -27,6 +27,7 @@ export function ProductionTab({
   activeProteins,
   canCreate,
   canEdit,
+  canEditBatch,
   canVoid,
   hasMoreBatches,
   historyBatches,
@@ -34,7 +35,9 @@ export function ProductionTab({
   loadingMoreBatches,
   metricBatches,
   onLoadMoreBatches,
+  onEditBatch,
   onOpenBatch,
+  onShowBatchHistory,
   onVoidBatch,
   onUpdateProtein,
   proteinCatalog,
@@ -45,6 +48,7 @@ export function ProductionTab({
   activeProteins: Protein[]
   canCreate: boolean
   canEdit: boolean
+  canEditBatch: boolean
   canVoid: boolean
   hasMoreBatches: boolean
   historyBatches: Batch[]
@@ -52,7 +56,9 @@ export function ProductionTab({
   loadingMoreBatches: boolean
   metricBatches: Batch[]
   onLoadMoreBatches: () => void
+  onEditBatch: (batch: Batch) => void
   onOpenBatch: (proteinId?: string) => void
+  onShowBatchHistory: (batch: Batch) => void
   onVoidBatch: (batchId: string) => void
   onUpdateProtein: (id: string, patch: Partial<Pick<Protein, 'cost' | 'target_yield' | 'active'>>) => void
   proteinCatalog: Protein[]
@@ -84,7 +90,10 @@ export function ProductionTab({
       <div className="section-title">Histórico geral de lotes</div>
       <LogTable
         batches={historyBatches}
+        canEdit={canEditBatch}
         canVoid={canVoid}
+        onEditBatch={onEditBatch}
+        onShowBatchHistory={onShowBatchHistory}
         onVoidBatch={onVoidBatch}
         proteins={proteinCatalog}
         showCosts={showCosts}
@@ -221,21 +230,28 @@ function MiniMetric({ label, value, tone = '' }: { label: string; value: string;
 
 function LogTable({
   batches,
+  canEdit,
   canVoid,
+  onEditBatch,
+  onShowBatchHistory,
   onVoidBatch,
   proteins,
   showCosts,
   showTargets,
 }: {
   batches: Batch[]
+  canEdit: boolean
   canVoid: boolean
+  onEditBatch: (batch: Batch) => void
+  onShowBatchHistory: (batch: Batch) => void
   onVoidBatch: (batchId: string) => void
   proteins: Protein[]
   showCosts: boolean
   showTargets: boolean
 }) {
   const byId = new Map(proteins.map((protein) => [protein.id, protein]))
-  const columnCount = 8 + (showCosts ? 1 : 0) + (canVoid ? 1 : 0)
+  const canManageBatch = canEdit || canVoid
+  const columnCount = 8 + (showCosts ? 1 : 0) + (canManageBatch ? 1 : 0)
 
   return (
     <section className="table-shell">
@@ -251,7 +267,7 @@ function LogTable({
             <th>Turno</th>
             <th>Obs.</th>
             <th>Situação</th>
-            {canVoid && <th />}
+            {canManageBatch && <th>Ações</th>}
           </tr>
         </thead>
         <tbody>
@@ -286,18 +302,35 @@ function LogTable({
                     <span className="active-badge">Válido</span>
                   )}
                 </td>
-                {canVoid && (
+                {canManageBatch && (
                   <td>
-                    {!batch.voided_at && (
-                      <button
-                        className="icon-btn danger"
-                        type="button"
-                        onClick={() => onVoidBatch(batch.id)}
-                        title="Anular lote"
-                      >
-                        <Archive size={15} />
-                      </button>
-                    )}
+                    <div className="row-actions">
+                      {canEdit && !batch.voided_at && (
+                        <button className="icon-btn" type="button" onClick={() => onEditBatch(batch)} title="Editar lote">
+                          <Pencil size={15} />
+                        </button>
+                      )}
+                      {canEdit && (
+                        <button
+                          className="icon-btn"
+                          type="button"
+                          onClick={() => onShowBatchHistory(batch)}
+                          title="Ver log de alterações"
+                        >
+                          <History size={15} />
+                        </button>
+                      )}
+                      {canVoid && !batch.voided_at && (
+                        <button
+                          className="icon-btn danger"
+                          type="button"
+                          onClick={() => onVoidBatch(batch.id)}
+                          title="Anular lote"
+                        >
+                          <Archive size={15} />
+                        </button>
+                      )}
+                    </div>
                   </td>
                 )}
               </tr>
@@ -310,18 +343,24 @@ function LogTable({
 }
 
 export function BatchModal({
+  editReason,
+  editingBatch,
   form,
   onChange,
   onClose,
+  onEditReasonChange,
   onSubmit,
   proteins,
   responsibleNames,
   showCosts,
   showTargets,
 }: {
+  editReason: string
+  editingBatch: Batch | null
   form: BatchForm
   onChange: (form: BatchForm) => void
   onClose: () => void
+  onEditReasonChange: (reason: string) => void
   onSubmit: (event: FormEvent) => void
   proteins: Protein[]
   responsibleNames: string[]
@@ -332,7 +371,16 @@ export function BatchModal({
   const gross = Number(form.grossKg)
   const net = Number(form.netKg)
   const yieldPct = gross > 0 && net > 0 && net <= gross ? (net / gross) * 100 : null
-  const estimatedCost = showCosts && protein?.cost && yieldPct ? protein.cost / (yieldPct / 100) : null
+  const costSnapshot =
+    editingBatch && editingBatch.protein_id === protein?.id ? editingBatch.protein_cost_snapshot : protein?.cost
+  const estimatedCost = showCosts && costSnapshot && yieldPct ? costSnapshot / (yieldPct / 100) : null
+  const selectableResponsibleNames =
+    editingBatch &&
+    form.responsible &&
+    form.responsible !== 'Outro' &&
+    !responsibleNames.includes(form.responsible)
+      ? [form.responsible, ...responsibleNames]
+      : responsibleNames
 
   useEffect(() => {
     const previousOverflow = document.body.style.overflow
@@ -360,11 +408,11 @@ export function BatchModal({
       <form className="modal" onSubmit={onSubmit}>
         <header className="modal-header">
           <div>
-            <h2 id="batch-modal-title">Nova produção</h2>
+            <h2 id="batch-modal-title">{editingBatch ? 'Editar lançamento' : 'Nova produção'}</h2>
             <span>
               {protein
-                ? showCosts && protein.cost
-                  ? `${protein.name} · ${fmtBRL(protein.cost)}/kg bruto`
+                ? showCosts && costSnapshot
+                  ? `${protein.name} · ${fmtBRL(costSnapshot)}/kg bruto`
                   : protein.name
                 : 'Selecione a proteína'}
             </span>
@@ -383,9 +431,10 @@ export function BatchModal({
                 className={form.proteinId === item.id ? 'active' : ''}
                 key={item.id}
                 type="button"
+                disabled={Boolean(editingBatch && !item.active && item.id !== editingBatch.protein_id)}
                 onClick={() => onChange({ ...form, proteinId: item.id })}
               >
-                {item.name}
+                {item.name}{!item.active && ' (inativa)'}
               </button>
             ))}
           </div>
@@ -446,7 +495,7 @@ export function BatchModal({
                 onChange={(event) => onChange({ ...form, responsible: event.target.value })}
               >
                 <option value="">Selecione</option>
-                {responsibleNames.map((name) => (
+                {selectableResponsibleNames.map((name) => (
                   <option key={name} value={name}>
                     {name}
                   </option>
@@ -460,6 +509,22 @@ export function BatchModal({
             Observações
             <textarea value={form.notes} onChange={(event) => onChange({ ...form, notes: event.target.value })} rows={3} />
           </label>
+
+          {editingBatch && (
+            <label className="justification-field">
+              Justificativa da alteração
+              <textarea
+                autoFocus
+                minLength={3}
+                onChange={(event) => onEditReasonChange(event.target.value)}
+                placeholder="Explique por que este lançamento precisa ser corrigido"
+                required
+                rows={3}
+                value={editReason}
+              />
+              <small>Obrigatória. Será registrada no log de auditoria.</small>
+            </label>
+          )}
         </div>
 
         <footer className="modal-footer">
@@ -468,10 +533,108 @@ export function BatchModal({
           </button>
           <button className="primary-btn" type="submit">
             <Save size={18} />
-            Salvar produção
+            {editingBatch ? 'Salvar alteração' : 'Salvar produção'}
           </button>
         </footer>
       </form>
+    </div>
+  )
+}
+
+const auditFieldLabels: Record<string, string> = {
+  protein_id: 'Proteína',
+  gross_kg: 'Peso bruto',
+  net_kg: 'Peso líquido',
+  yield_pct: 'Rendimento',
+  protein_cost_snapshot: 'Custo bruto congelado',
+  real_cost_kg: 'Custo real/kg',
+  shift: 'Turno',
+  responsible: 'Responsável',
+  notes: 'Observações',
+}
+
+function formatAuditValue(field: string, value: unknown, proteins: Protein[]) {
+  if (value === null || value === undefined || value === '') return '-'
+  if (field === 'protein_id') return proteins.find((protein) => protein.id === value)?.name ?? String(value)
+  if (field === 'gross_kg' || field === 'net_kg') return fmtKg(Number(value))
+  if (field === 'yield_pct') return fmtPct(Number(value))
+  if (field === 'protein_cost_snapshot' || field === 'real_cost_kg') return fmtBRL(Number(value))
+  if (field === 'shift') return value === 'manha' ? 'Manhã' : 'Tarde'
+  return String(value)
+}
+
+export function BatchHistoryModal({
+  batch,
+  loading,
+  logs,
+  onClose,
+  proteins,
+}: {
+  batch: Batch
+  loading: boolean
+  logs: BatchEditLog[]
+  onClose: () => void
+  proteins: Protein[]
+}) {
+  const proteinName = proteins.find((protein) => protein.id === batch.protein_id)?.name ?? 'Proteína indisponível'
+
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    const closeOnEscape = (event: KeyboardEvent) => event.key === 'Escape' && onClose()
+    window.addEventListener('keydown', closeOnEscape)
+    return () => {
+      document.body.style.overflow = previousOverflow
+      window.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [onClose])
+
+  return (
+    <div
+      aria-labelledby="batch-history-title"
+      aria-modal="true"
+      className="overlay"
+      onMouseDown={(event) => event.target === event.currentTarget && onClose()}
+      role="dialog"
+    >
+      <section className="modal audit-modal">
+        <header className="modal-header">
+          <div>
+            <h2 id="batch-history-title">Log de alterações</h2>
+            <span>{proteinName} · {new Date(batch.recorded_at).toLocaleString('pt-BR', { timeZone: BUSINESS_TIME_ZONE })}</span>
+          </div>
+          <button className="icon-btn ghost" type="button" onClick={onClose} title="Fechar">
+            <X size={18} />
+          </button>
+        </header>
+
+        <div className="modal-body audit-list">
+          {loading && <div className="empty-state">Carregando alterações...</div>}
+          {!loading && logs.length === 0 && <div className="empty-state">Este lote ainda não foi editado.</div>}
+          {!loading && logs.map((log) => (
+            <article className="audit-entry" key={log.id}>
+              <header>
+                <strong>{log.editor_name || 'Usuário removido'}</strong>
+                <time>{new Date(log.edited_at).toLocaleString('pt-BR', { timeZone: BUSINESS_TIME_ZONE })}</time>
+              </header>
+              <p><strong>Justificativa:</strong> {log.reason}</p>
+              <div className="audit-changes">
+                {log.changed_fields.map((field) => (
+                  <div className="audit-change" key={field}>
+                    <span>{auditFieldLabels[field] ?? field}</span>
+                    <del>{formatAuditValue(field, log.before_data[field], proteins)}</del>
+                    <strong>{formatAuditValue(field, log.after_data[field], proteins)}</strong>
+                  </div>
+                ))}
+              </div>
+            </article>
+          ))}
+        </div>
+
+        <footer className="modal-footer">
+          <button className="secondary-btn" type="button" onClick={onClose}>Fechar</button>
+        </footer>
+      </section>
     </div>
   )
 }

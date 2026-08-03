@@ -15,6 +15,10 @@ export function canVoidBatch(role: Role) {
   return roleRank[role] >= roleRank.gestor
 }
 
+export function canEditBatch(role: Role) {
+  return roleRank[role] >= roleRank.gestor
+}
+
 export function canManageProteins(role: Role) {
   return roleRank[role] >= roleRank.gestor
 }

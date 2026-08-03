@@ -10,7 +10,8 @@ Sistema interno para controle de rendimento de proteínas, com autenticação, n
 - A janela padrão dos indicadores é de 30 dias e pode ser alterada por gestores.
 - O custo salvo no lote é um retrato do custo da matéria-prima no momento do lançamento.
 - Alterar o custo atual de uma proteína não modifica lotes anteriores.
-- Lotes não são apagados nem editados. Um gestor pode anulá-los com justificativa e registrar a correção em um novo lote.
+- Lotes não são apagados. Gestores e administradores podem anulá-los ou corrigir seus dados com justificativa obrigatória.
+- Cada correção registra autor, data, justificativa, campos alterados e valores anterior/novo em um log de auditoria.
 - Proteínas não são apagadas. Elas podem ser desativadas e reativadas sem perder o histórico.
 - Datas operacionais são calculadas no fuso `America/Fortaleza`.
 
@@ -79,6 +80,8 @@ Antes de publicar o novo frontend, execute no SQL Editor:
 
 ```text
 supabase/migrations/202607300001_harden_history_and_access.sql
+supabase/migrations/202607300002_grant_view_helper_functions.sql
+supabase/migrations/202608030001_enable_audited_batch_edits.sql
 ```
 
 A migração:
@@ -86,6 +89,7 @@ A migração:
 - preserva todos os lotes existentes;
 - congela em cada lote o custo disponível no momento da migração;
 - substitui exclusões por anulações auditáveis;
+- permite correções de lotes por gestor/admin e preserva o antes/depois em log;
 - adiciona índices e paginação;
 - remove a promoção automática do primeiro cadastro;
 - aplica privilégios de coluna e funções administrativas protegidas.
@@ -117,8 +121,9 @@ No Supabase Auth, configure a URL final da Vercel como Site URL e Redirect URL. 
 
 - `profiles`: usuários e papéis.
 - `proteins`: catálogo, custo atual, meta e estado ativo.
-- `batches`: lotes imutáveis, custo congelado e dados de anulação.
+- `batches`: lotes, custo congelado e dados de anulação.
+- `batch_edit_logs`: trilha imutável das correções, com autor, justificativa e valores anterior/novo.
 - `production_responsibles`: responsáveis disponíveis no formulário.
 - `app_settings`: limite sem produção e janela dos indicadores.
 
-As regras críticas vivem no banco: RLS controla linhas, privilégios controlam colunas, triggers calculam os valores do lote e funções protegidas realizam anulações e alterações de papel.
+As regras críticas vivem no banco: RLS controla linhas, privilégios controlam colunas, triggers calculam e protegem os valores do lote e funções protegidas realizam edições auditáveis, anulações e alterações de papel.

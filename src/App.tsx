@@ -12,7 +12,17 @@ import {
 import { FunctionsHttpError, type Session } from '@supabase/supabase-js'
 import './App.css'
 import { supabase, isSupabaseConfigured } from './lib/supabase'
-import type { AppSetting, Batch, BatchForm, NewUserForm, Profile, Protein, ResponsibleOption, Role } from './types'
+import type {
+  AppSetting,
+  Batch,
+  BatchEditLog,
+  BatchForm,
+  NewUserForm,
+  Profile,
+  Protein,
+  ResponsibleOption,
+  Role,
+} from './types'
 import {
   BUSINESS_TIME_ZONE,
   averageYield,
@@ -25,6 +35,7 @@ import {
 } from './lib/metrics'
 import {
   canCreateBatch,
+  canEditBatch,
   canManageProteins,
   canManageUsers,
   canVoidBatch,
@@ -36,7 +47,7 @@ import { useNow } from './hooks/useNow'
 import { AuthPanel, SetupRequired, Splash } from './components/AuthViews'
 import { AccessTab } from './components/AccessTab'
 import { AlertsTab } from './components/AlertsTab'
-import { BatchModal, Metric, ProductionTab } from './components/ProductionViews'
+import { BatchHistoryModal, BatchModal, Metric, ProductionTab } from './components/ProductionViews'
 
 type Tab = 'producao' | 'alertas' | 'acessos'
 
@@ -104,6 +115,11 @@ function Workspace({ session }: { session: Session }) {
   const [tab, setTab] = useState<Tab>('producao')
   const [batchForm, setBatchForm] = useState<BatchForm>(emptyBatchForm)
   const [modalOpen, setModalOpen] = useState(false)
+  const [editingBatch, setEditingBatch] = useState<Batch | null>(null)
+  const [editReason, setEditReason] = useState('')
+  const [historyBatch, setHistoryBatch] = useState<Batch | null>(null)
+  const [batchEditLogs, setBatchEditLogs] = useState<BatchEditLog[]>([])
+  const [loadingBatchEditLogs, setLoadingBatchEditLogs] = useState(false)
   const [newProtein, setNewProtein] = useState({ name: '', cost: '', target: '80' })
   const [status, setStatus] = useState('')
   const [loading, setLoading] = useState(true)
@@ -231,8 +247,46 @@ function Workspace({ session }: { session: Session }) {
   }, [activeProteins, metricBatches, showTargets, today])
 
   function openBatchModal(proteinId = '') {
+    setEditingBatch(null)
+    setEditReason('')
     setBatchForm({ ...emptyBatchForm, proteinId })
     setModalOpen(true)
+  }
+
+  function openEditBatch(batch: Batch) {
+    if (!canEditBatch(role) || batch.voided_at) return
+    setEditingBatch(batch)
+    setEditReason('')
+    setBatchForm({
+      proteinId: batch.protein_id,
+      grossKg: String(batch.gross_kg),
+      netKg: String(batch.net_kg),
+      shift: batch.shift,
+      responsible: batch.responsible ?? '',
+      notes: batch.notes ?? '',
+    })
+    setModalOpen(true)
+  }
+
+  async function showBatchHistory(batch: Batch) {
+    if (!supabase || !canEditBatch(role)) return
+    setHistoryBatch(batch)
+    setBatchEditLogs([])
+    setLoadingBatchEditLogs(true)
+
+    const { data, error } = await supabase
+      .from('batch_edit_logs_for_current_user')
+      .select('*')
+      .eq('batch_id', batch.id)
+      .order('edited_at', { ascending: false })
+
+    if (error) {
+      setStatus(`Não foi possível carregar o log de alterações: ${error.message}`)
+      setHistoryBatch(null)
+    } else {
+      setBatchEditLogs((data ?? []) as BatchEditLog[])
+    }
+    setLoadingBatchEditLogs(false)
   }
 
   async function loadMoreBatchHistory() {
@@ -412,6 +466,65 @@ function Workspace({ session }: { session: Session }) {
 
     setModalOpen(false)
     setStatus('Produção registrada com custo e rendimento congelados no histórico.')
+    await loadWorkspace()
+  }
+
+  async function editBatch(event: FormEvent) {
+    event.preventDefault()
+    if (!supabase || !editingBatch || !canEditBatch(role)) return
+
+    const protein = proteins.find((item) => item.id === batchForm.proteinId)
+    const gross = Number(batchForm.grossKg)
+    const net = Number(batchForm.netKg)
+    if (
+      !protein ||
+      (!protein.active && protein.id !== editingBatch.protein_id) ||
+      !Number.isFinite(gross) ||
+      !Number.isFinite(net) ||
+      gross <= 0 ||
+      net <= 0 ||
+      net > gross
+    ) {
+      setStatus('Confira proteína, peso bruto e peso líquido.')
+      return
+    }
+
+    if (!batchForm.responsible) {
+      setStatus('Selecione o responsável.')
+      return
+    }
+
+    if (batchForm.responsible === otherResponsibleValue && !batchForm.notes.trim()) {
+      setStatus('Informe o responsável nas observações.')
+      return
+    }
+
+    const reason = editReason.trim()
+    if (reason.length < 3) {
+      setStatus('Informe uma justificativa com pelo menos 3 caracteres.')
+      return
+    }
+
+    const { error } = await supabase.rpc('edit_batch', {
+      p_batch_id: editingBatch.id,
+      p_gross_kg: gross,
+      p_net_kg: net,
+      p_notes: batchForm.notes.trim() || null,
+      p_protein_id: protein.id,
+      p_reason: reason,
+      p_responsible: batchForm.responsible.trim(),
+      p_shift: batchForm.shift,
+    })
+
+    if (error) {
+      setStatus(error.message)
+      return
+    }
+
+    setModalOpen(false)
+    setEditingBatch(null)
+    setEditReason('')
+    setStatus('Lançamento atualizado e alteração registrada no log.')
     await loadWorkspace()
   }
 
@@ -642,6 +755,7 @@ function Workspace({ session }: { session: Session }) {
             activeProteins={activeProteins}
             canCreate={canCreateBatch(role)}
             canEdit={canManageProteins(role)}
+            canEditBatch={canEditBatch(role)}
             canVoid={canVoidBatch(role)}
             hasMoreBatches={hasMoreBatches}
             historyBatches={batches}
@@ -649,7 +763,9 @@ function Workspace({ session }: { session: Session }) {
             loadingMoreBatches={loadingMoreBatches}
             metricBatches={metricBatches}
             onLoadMoreBatches={loadMoreBatchHistory}
+            onEditBatch={openEditBatch}
             onOpenBatch={openBatchModal}
+            onShowBatchHistory={showBatchHistory}
             onVoidBatch={voidBatch}
             onUpdateProtein={updateProtein}
             proteinCatalog={proteins}
@@ -698,14 +814,31 @@ function Workspace({ session }: { session: Session }) {
 
       {modalOpen && (
         <BatchModal
+          editReason={editReason}
+          editingBatch={editingBatch}
           form={batchForm}
           onChange={setBatchForm}
-          onClose={() => setModalOpen(false)}
-          onSubmit={createBatch}
-          proteins={activeProteins}
+          onClose={() => {
+            setModalOpen(false)
+            setEditingBatch(null)
+            setEditReason('')
+          }}
+          onEditReasonChange={setEditReason}
+          onSubmit={editingBatch ? editBatch : createBatch}
+          proteins={editingBatch ? proteins : activeProteins}
           responsibleNames={responsibleNames}
           showCosts={showCosts}
           showTargets={showTargets}
+        />
+      )}
+
+      {historyBatch && (
+        <BatchHistoryModal
+          batch={historyBatch}
+          loading={loadingBatchEditLogs}
+          logs={batchEditLogs}
+          onClose={() => setHistoryBatch(null)}
+          proteins={proteins}
         />
       )}
     </div>

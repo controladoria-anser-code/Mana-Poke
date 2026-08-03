@@ -1029,6 +1029,99 @@ tr:last-child td {
   border-color: var(--coral);
 }
 
+.protein-chips button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.justification-field {
+  padding: 14px;
+  border: 1px solid rgba(224, 85, 53, 0.3);
+  border-radius: 8px;
+  background: rgba(224, 85, 53, 0.06);
+}
+
+.justification-field small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.audit-modal {
+  width: min(760px, 100%);
+}
+
+.audit-list {
+  display: grid;
+  gap: 14px;
+}
+
+.audit-entry {
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+}
+
+.audit-entry > header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--teal);
+}
+
+.audit-entry time {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.audit-entry > p {
+  margin: 10px 0 14px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.audit-changes {
+  display: grid;
+  gap: 6px;
+}
+
+.audit-change {
+  display: grid;
+  grid-template-columns: minmax(130px, 0.9fr) minmax(100px, 1fr) 20px minmax(100px, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--surface);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.audit-change::after {
+  content: '→';
+  grid-column: 3;
+  grid-row: 1;
+  color: var(--muted);
+  text-align: center;
+}
+
+.audit-change > span {
+  color: var(--muted);
+}
+
+.audit-change > del {
+  grid-column: 2;
+  color: var(--danger);
+  overflow-wrap: anywhere;
+}
+
+.audit-change > strong {
+  grid-column: 4;
+  color: var(--lime);
+  overflow-wrap: anywhere;
+}
+
 .form-grid.two,
 .live-calc {
   display: grid;
@@ -1103,6 +1196,31 @@ tr:last-child td {
   .overlay {
     padding: 0;
     place-items: end center;
+  }
+
+  .audit-entry > header,
+  .audit-change {
+    grid-template-columns: 1fr;
+  }
+
+  .audit-entry > header {
+    display: grid;
+  }
+
+  .audit-change::after {
+    content: '↓';
+    grid-column: 1;
+    grid-row: 3;
+  }
+
+  .audit-change > del {
+    grid-column: 1;
+    grid-row: 2;
+  }
+
+  .audit-change > strong {
+    grid-column: 1;
+    grid-row: 4;
   }
 
   .tab-nav {
