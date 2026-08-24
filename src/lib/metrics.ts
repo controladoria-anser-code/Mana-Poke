@@ -1,6 +1,12 @@
-import type { Batch, Protein } from '../types'
+import type { Batch, Protein, RecipeItem } from '../types'
 
 export const BUSINESS_TIME_ZONE = 'America/Fortaleza'
+
+const businessDateFormatter = new Intl.DateTimeFormat('en-CA', { timeZone: BUSINESS_TIME_ZONE })
+
+export function businessDateKey(iso: string) {
+  return businessDateFormatter.format(new Date(iso))
+}
 
 export function fmtBRL(value: number) {
   return value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
@@ -8,6 +14,11 @@ export function fmtBRL(value: number) {
 
 export function fmtKg(value: number) {
   return `${value.toLocaleString('pt-BR', { maximumFractionDigits: 3 })} kg`
+}
+
+export function fmtQty(value: number, unit: string) {
+  const maximumFractionDigits = unit === 'un' ? 0 : 3
+  return `${value.toLocaleString('pt-BR', { maximumFractionDigits })} ${unit}`
 }
 
 export function fmtPct(value: number | null | undefined) {
@@ -34,10 +45,10 @@ export function batchesForProtein(batches: Batch[], proteinId: string) {
 
 export function weightedYield(batches: Batch[]) {
   const validBatches = batches.filter((batch) => !batch.voided_at)
-  const grossKg = validBatches.reduce((sum, batch) => sum + batch.gross_kg, 0)
-  if (grossKg <= 0) return null
-  const netKg = validBatches.reduce((sum, batch) => sum + batch.net_kg, 0)
-  return (netKg / grossKg) * 100
+  const grossQty = validBatches.reduce((sum, batch) => sum + batch.gross_qty, 0)
+  if (grossQty <= 0) return null
+  const netQty = validBatches.reduce((sum, batch) => sum + batch.net_qty, 0)
+  return (netQty / grossQty) * 100
 }
 
 export function averageYield(batches: Batch[], proteinId: string) {
@@ -77,6 +88,20 @@ export function daysSince(dateIso?: string, now = new Date(), timeZone = BUSINES
   return Math.floor((todayDay - thenDay) / 86_400_000)
 }
 
+export function recipeItemCost(item: RecipeItem, metricBatches: Batch[]) {
+  if (item.protein_cost === null) return null
+  // Nem todo ingrediente tem lote registrado (bebida, outros nunca vão ter) —
+  // sem rendimento resolvível, assume 100% em vez de deixar o custo em branco.
+  const yieldPct = averageYield(metricBatches, item.protein_id) ?? item.protein_target_yield ?? 100
+  return (item.protein_cost / (yieldPct / 100)) * item.quantity
+}
+
+export function recipeTotalCost(items: RecipeItem[], metricBatches: Batch[]) {
+  const resolvedCosts = items.map((item) => recipeItemCost(item, metricBatches)).filter((cost) => cost !== null)
+  if (resolvedCosts.length === 0) return null
+  return resolvedCosts.reduce((sum, cost) => sum + cost, 0)
+}
+
 export function startOfMetricWindow(windowDays: number, now = new Date()) {
   const start = new Date(now)
   start.setDate(start.getDate() - Math.max(1, Math.floor(windowDays)))
@@ -97,20 +122,25 @@ export function buildAlerts(
     const last = lastBatch(latestBatches, protein.id)
     const days = daysSince(last?.recorded_at, now)
 
-    if (days === null) {
-      alerts.push({
-        severity: 'danger',
-        title: `${protein.name} sem lançamento`,
-        desc: 'Nenhum lote foi registrado para esta proteína.',
-        proteinId: protein.id,
-      })
-    } else if (days >= thresholdDays) {
-      alerts.push({
-        severity: 'danger',
-        title: `${protein.name} parado há ${days} dia${days > 1 ? 's' : ''}`,
-        desc: `Último lote atingiu o limite configurado de ${thresholdDays} dia${thresholdDays > 1 ? 's' : ''}.`,
-        proteinId: protein.id,
-      })
+    // Item sem meta de rendimento nunca "opta" por rastreio de produção
+    // (bebida, outros) — não faz sentido alertar que "parou de produzir"
+    // algo que nunca teve lote registrado por design.
+    if (protein.target_yield !== null) {
+      if (days === null) {
+        alerts.push({
+          severity: 'danger',
+          title: `${protein.name} sem lançamento`,
+          desc: 'Nenhum lote foi registrado para este item.',
+          proteinId: protein.id,
+        })
+      } else if (days >= thresholdDays) {
+        alerts.push({
+          severity: 'danger',
+          title: `${protein.name} parado há ${days} dia${days > 1 ? 's' : ''}`,
+          desc: `Último lote atingiu o limite configurado de ${thresholdDays} dia${thresholdDays > 1 ? 's' : ''}.`,
+          proteinId: protein.id,
+        })
+      }
     }
 
     if (includeTargetAlerts && avg !== null && protein.target_yield !== null && avg < protein.target_yield) {

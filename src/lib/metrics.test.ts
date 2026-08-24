@@ -12,9 +12,9 @@ import {
 function batch(overrides: Partial<Batch> = {}): Batch {
   return {
     created_by: 'user-1',
-    gross_kg: 10,
+    gross_qty: 10,
     id: crypto.randomUUID(),
-    net_kg: 8,
+    net_qty: 8,
     notes: null,
     protein_cost_snapshot: 50,
     protein_id: 'protein-1',
@@ -33,19 +33,22 @@ function batch(overrides: Partial<Batch> = {}): Batch {
 
 const protein: Protein = {
   active: true,
+  category: 'proteinas',
   cost: 50,
   created_at: '2026-01-01T00:00:00.000Z',
   id: 'protein-1',
+  min_stock_kg: null,
   name: 'Atum',
   slug: 'atum',
   target_yield: 85,
+  unit: 'kg',
 }
 
 describe('métricas de rendimento', () => {
   it('pondera o rendimento pelo peso bruto', () => {
     const rows = [
-      batch({ gross_kg: 1, net_kg: 0.5, yield_pct: 50 }),
-      batch({ gross_kg: 100, net_kg: 90, yield_pct: 90 }),
+      batch({ gross_qty: 1, net_qty: 0.5, yield_pct: 50 }),
+      batch({ gross_qty: 100, net_qty: 90, yield_pct: 90 }),
     ]
 
     expect(weightedYield(rows)).toBeCloseTo(89.60396, 4)
@@ -56,7 +59,7 @@ describe('métricas de rendimento', () => {
     const valid = batch({ id: 'valid', recorded_at: '2026-07-28T12:00:00.000Z' })
     const voided = batch({
       id: 'voided',
-      net_kg: 1,
+      net_qty: 1,
       recorded_at: '2026-07-30T12:00:00.000Z',
       void_reason: 'Lançamento duplicado',
       voided_at: '2026-07-30T13:00:00.000Z',
@@ -81,7 +84,7 @@ describe('datas operacionais', () => {
 
 describe('alertas', () => {
   it('usa a janela de métricas e o último lote válido separadamente', () => {
-    const metricRows = [batch({ net_kg: 8, yield_pct: 80 })]
+    const metricRows = [batch({ net_qty: 8, yield_pct: 80 })]
     const latestRows = [batch({ recorded_at: '2026-07-28T12:00:00.000Z' })]
     const now = new Date('2026-07-30T15:00:00.000Z')
 
