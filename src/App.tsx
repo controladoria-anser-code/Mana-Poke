@@ -1083,9 +1083,9 @@ function Workspace({
     <div className="app-shell">
       <aside className="sidebar">
         <div className="sidebar-brand">
-          <div className="logo-mark">MP</div>
+          <div className="logo-mark">CC</div>
           <div>
-            <div className="logo-main">{account?.name ?? 'Mana Poke'}</div>
+            <div className="logo-main">{account?.name ?? 'Controle do Chefe'}</div>
             <div className="logo-sub">Controle de rendimento</div>
           </div>
         </div>
