@@ -62,6 +62,38 @@ const emptyBatchForm: BatchForm = {
 
 const otherResponsibleValue = 'Outro'
 const batchPageSize = 250
+const workspaceRequestTimeoutMs = 15_000
+
+async function withDiagnosticTimeout<T>(label: string, request: PromiseLike<T>): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined
+
+  try {
+    return await Promise.race([
+      Promise.resolve(request),
+      new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(() => {
+          reject(
+            new Error(
+              `Tempo limite excedido ao carregar ${label} (${workspaceRequestTimeoutMs / 1000}s).`,
+            ),
+          )
+        }, workspaceRequestTimeoutMs)
+      }),
+    ])
+  } finally {
+    if (timeoutId !== undefined) clearTimeout(timeoutId)
+  }
+}
+
+function formatLoadError(error: unknown) {
+  if (error instanceof Error) return error.message
+  if (typeof error === 'object' && error && 'message' in error) return String(error.message)
+  return 'Erro inesperado sem detalhes adicionais.'
+}
+
+function formatServiceError(label: string, error: { message: string; code?: string }) {
+  return `${label}: ${error.message}${error.code ? ` (código ${error.code})` : ''}`
+}
 
 function buildResponsibleNames(options: ResponsibleOption[]) {
   return options.map((option) => option.name).sort((a, b) => a.localeCompare(b, 'pt-BR'))
@@ -127,84 +159,112 @@ function Workspace({ session }: { session: Session }) {
   const loadWorkspace = useCallback(async () => {
     if (!supabase) return
     setLoading(true)
+    setStatus('')
 
-    const { data: profileRow, error: profileError } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', session.user.id)
-      .maybeSingle()
-
-    const nextProfile = profileRow as Profile | null
-
-    if (!nextProfile || !nextProfile.enabled) {
-      setProfile(null)
-      setStatus(
-        profileError?.message ??
-          'Seu acesso ainda não foi habilitado. Solicite a um administrador que regularize o usuário.',
+    try {
+      const { data: profileRow, error: profileError } = await withDiagnosticTimeout(
+        'o perfil do usuário',
+        supabase.from('profiles').select('*').eq('id', session.user.id).maybeSingle(),
       )
-      setLoading(false)
-      return
-    }
 
-    setProfile(nextProfile)
-    const metricWindowStart = startOfMetricWindow(yieldWindowDays).toISOString()
-    const [proteinRows, batchRows, metricBatchRows, latestBatchRows, settingRows, responsibleRows] = await Promise.all([
-      supabase.from('proteins_for_current_user').select('*').order('name'),
-      supabase
-        .from('batches_for_current_user')
-        .select('*')
-        .order('recorded_at', { ascending: false })
-        .range(0, batchPageSize - 1),
-      supabase
-        .from('batches_for_current_user')
-        .select('*')
-        .is('voided_at', null)
-        .gte('recorded_at', metricWindowStart)
-        .order('recorded_at', { ascending: false }),
-      supabase.from('latest_batches_for_current_user').select('*'),
-      supabase.from('app_settings').select('*'),
-      supabase.from('production_responsibles').select('*').order('name'),
-    ])
-
-    const loadError = [
-      proteinRows.error,
-      batchRows.error,
-      metricBatchRows.error,
-      latestBatchRows.error,
-      settingRows.error,
-      responsibleRows.error,
-    ].find(Boolean)
-
-    if (loadError) {
-      setStatus(`Não foi possível sincronizar todos os dados: ${loadError.message}`)
-      setLoading(false)
-      return
-    }
-
-    setProteins((proteinRows.data ?? []) as Protein[])
-    setBatches((batchRows.data ?? []) as Batch[])
-    setMetricBatches((metricBatchRows.data ?? []) as Batch[])
-    setLatestBatches((latestBatchRows.data ?? []) as Batch[])
-    setHasMoreBatches((batchRows.data?.length ?? 0) === batchPageSize)
-
-    const settings = (settingRows.data ?? []) as AppSetting[]
-    const loadedThreshold = Number(settings.find((item) => item.key === 'alert_threshold')?.value ?? 1)
-    const loadedWindow = Number(settings.find((item) => item.key === 'yield_window_days')?.value ?? 30)
-    setThreshold(Number.isFinite(loadedThreshold) && loadedThreshold >= 1 ? loadedThreshold : 1)
-    setYieldWindowDays(Number.isFinite(loadedWindow) && loadedWindow >= 1 ? loadedWindow : 30)
-    setResponsibleOptions((responsibleRows.data ?? []) as ResponsibleOption[])
-
-    if (canManageUsers(nextProfile.role)) {
-      const { data: allProfiles, error: profilesError } = await supabase.from('profiles').select('*').order('created_at')
-      if (profilesError) {
-        setStatus(`Dados carregados, mas os acessos não puderam ser consultados: ${profilesError.message}`)
+      if (profileError) {
+        setProfile(null)
+        setStatus(`Diagnóstico da inicialização — ${formatServiceError('perfil do usuário', profileError)}`)
+        return
       }
-      setProfiles((allProfiles ?? []) as Profile[])
-    } else {
-      setProfiles([])
-    }
 
-    setLoading(false)
+      const nextProfile = profileRow as Profile | null
+
+      if (!nextProfile || !nextProfile.enabled) {
+        setProfile(null)
+        setStatus('Seu acesso ainda não foi habilitado. Solicite a um administrador que regularize o usuário.')
+        return
+      }
+
+      setProfile(nextProfile)
+      const metricWindowStart = startOfMetricWindow(yieldWindowDays).toISOString()
+      const [proteinRows, batchRows, metricBatchRows, latestBatchRows, settingRows, responsibleRows] =
+        await Promise.all([
+          withDiagnosticTimeout(
+            'o catálogo de proteínas',
+            supabase.from('proteins_for_current_user').select('*').order('name'),
+          ),
+          withDiagnosticTimeout(
+            'o histórico de lotes',
+            supabase
+              .from('batches_for_current_user')
+              .select('*')
+              .order('recorded_at', { ascending: false })
+              .range(0, batchPageSize - 1),
+          ),
+          withDiagnosticTimeout(
+            'os indicadores de rendimento',
+            supabase
+              .from('batches_for_current_user')
+              .select('*')
+              .is('voided_at', null)
+              .gte('recorded_at', metricWindowStart)
+              .order('recorded_at', { ascending: false }),
+          ),
+          withDiagnosticTimeout(
+            'os últimos lotes',
+            supabase.from('latest_batches_for_current_user').select('*'),
+          ),
+          withDiagnosticTimeout('as configurações', supabase.from('app_settings').select('*')),
+          withDiagnosticTimeout(
+            'os responsáveis de produção',
+            supabase.from('production_responsibles').select('*').order('name'),
+          ),
+        ])
+
+      const loadFailure = [
+        { error: proteinRows.error, label: 'catálogo de proteínas' },
+        { error: batchRows.error, label: 'histórico de lotes' },
+        { error: metricBatchRows.error, label: 'indicadores de rendimento' },
+        { error: latestBatchRows.error, label: 'últimos lotes' },
+        { error: settingRows.error, label: 'configurações' },
+        { error: responsibleRows.error, label: 'responsáveis de produção' },
+      ].find((item) => item.error)
+
+      if (loadFailure?.error) {
+        setStatus(
+          `Diagnóstico da inicialização — ${formatServiceError(loadFailure.label, loadFailure.error)}. Tente atualizar a página.`,
+        )
+        return
+      }
+
+      setProteins((proteinRows.data ?? []) as Protein[])
+      setBatches((batchRows.data ?? []) as Batch[])
+      setMetricBatches((metricBatchRows.data ?? []) as Batch[])
+      setLatestBatches((latestBatchRows.data ?? []) as Batch[])
+      setHasMoreBatches((batchRows.data?.length ?? 0) === batchPageSize)
+
+      const settings = (settingRows.data ?? []) as AppSetting[]
+      const loadedThreshold = Number(settings.find((item) => item.key === 'alert_threshold')?.value ?? 1)
+      const loadedWindow = Number(settings.find((item) => item.key === 'yield_window_days')?.value ?? 30)
+      setThreshold(Number.isFinite(loadedThreshold) && loadedThreshold >= 1 ? loadedThreshold : 1)
+      setYieldWindowDays(Number.isFinite(loadedWindow) && loadedWindow >= 1 ? loadedWindow : 30)
+      setResponsibleOptions((responsibleRows.data ?? []) as ResponsibleOption[])
+
+      if (canManageUsers(nextProfile.role)) {
+        const { data: allProfiles, error: profilesError } = await withDiagnosticTimeout(
+          'a lista de acessos',
+          supabase.from('profiles').select('*').order('created_at'),
+        )
+        if (profilesError) {
+          setStatus(
+            `Dados carregados, mas ${formatServiceError('lista de acessos', profilesError)}.`,
+          )
+        }
+        setProfiles((allProfiles ?? []) as Profile[])
+      } else {
+        setProfiles([])
+      }
+    } catch (error) {
+      setStatus(`Diagnóstico da inicialização — ${formatLoadError(error)} Tente atualizar a página.`)
+    } finally {
+      setLoading(false)
+    }
   }, [session.user.id, yieldWindowDays])
 
   useEffect(() => {
