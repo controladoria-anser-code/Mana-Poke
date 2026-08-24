@@ -1,10 +1,26 @@
 import { type FormEvent, useState } from 'react'
-import { Archive, Edit3, Eye, Plus, Save, Shield, Trash2, Undo2, UserPlus } from 'lucide-react'
+import {
+  Archive,
+  CreditCard,
+  Lock,
+  Mail,
+  Plus,
+  Shield,
+  Trash2,
+  Undo2,
+  User,
+  UserPlus,
+  Users,
+} from 'lucide-react'
 import { BUSINESS_TIME_ZONE } from '../lib/metrics'
+import { PLAN_DETAILS, SUBSCRIPTION_STATUS_LABEL, SUBSCRIPTION_STATUS_TONE } from '../lib/billing'
 import { roleLabel } from '../lib/permissions'
-import type { NewUserForm, Profile, ResponsibleOption, Role } from '../types'
+import type { NewUserForm, Profile, ResponsibleOption, Role, Subscription } from '../types'
+import { Metric } from './ProductionViews'
+import { Select } from './Select'
 
 const roles: Role[] = ['admin', 'gestor', 'operador', 'viewer']
+const roleOptions = roles.map((role) => ({ value: role, label: roleLabel(role) }))
 
 const emptyNewUserForm: NewUserForm = {
   email: '',
@@ -18,19 +34,23 @@ export function AccessTab({
   onCreateResponsible,
   onCreateUser,
   onDeleteResponsible,
+  onManageBilling,
   onToggleUser,
   onUpdateRole,
   profiles,
   responsibleOptions,
+  subscription,
 }: {
   currentUserId: string
   onCreateResponsible: (name: string) => Promise<boolean>
   onCreateUser: (newUser: NewUserForm) => Promise<boolean>
   onDeleteResponsible: (responsible: ResponsibleOption) => void
+  onManageBilling: () => void
   onToggleUser: (profile: Profile) => void
   onUpdateRole: (userId: string, role: Role) => void
   profiles: Profile[]
   responsibleOptions: ResponsibleOption[]
+  subscription: Subscription | null
 }) {
   const [newUser, setNewUser] = useState<NewUserForm>(emptyNewUserForm)
   const [newResponsible, setNewResponsible] = useState('')
@@ -53,29 +73,76 @@ export function AccessTab({
     setCreatingResponsible(false)
   }
 
+  const activeUsers = profiles.filter((profile) => profile.enabled)
+  const blockedUsers = profiles.filter((profile) => !profile.enabled)
+
   return (
     <section className="access-panel">
-      <div className="section-title">Níveis de acesso</div>
-      <div className="role-help">
-        <span>
-          <Shield size={16} /> Admin gerencia usuários e dados.
-        </span>
-        <span>
-          <Edit3 size={16} /> Gestor edita proteínas e anula lotes com justificativa.
-        </span>
-        <span>
-          <Save size={16} /> Operador registra lotes.
-        </span>
-        <span>
-          <Eye size={16} /> Leitor apenas consulta.
-        </span>
+      <div className="finance-metrics-row">
+        <Metric icon={Users} iconMotion="stack" label="Usuários ativos" sub="com acesso liberado" tone="ok" value={String(activeUsers.length)} />
+        <Metric
+          icon={Archive}
+          iconMotion={blockedUsers.length > 0 ? 'fall' : 'rise'}
+          label="Usuários bloqueados"
+          sub={blockedUsers.length > 0 ? 'Sem acesso' : 'Nenhum'}
+          tone={blockedUsers.length > 0 ? 'danger' : 'ok'}
+          value={String(blockedUsers.length)}
+        />
+        <Metric icon={User} iconMotion="stack" label="Responsáveis" sub="cadastrados na produção" tone="accent" value={String(responsibleOptions.length)} />
+        <Metric
+          icon={CreditCard}
+          iconMotion="balance"
+          label="Plano atual"
+          sub={subscription ? SUBSCRIPTION_STATUS_LABEL[subscription.status] : 'Sem assinatura'}
+          tone={subscription ? SUBSCRIPTION_STATUS_TONE[subscription.status] : 'virgin'}
+          value={subscription ? PLAN_DETAILS[subscription.plan_slug].name : '-'}
+        />
+      </div>
+
+      <div className="section-title">
+        <CreditCard size={13} />
+        Assinatura
+      </div>
+      <div className="billing-summary">
+        {subscription ? (
+          <>
+            <span>
+              <strong>{PLAN_DETAILS[subscription.plan_slug].name}</strong>
+            </span>
+            <span className={`status-pill ${SUBSCRIPTION_STATUS_TONE[subscription.status]}`}>
+              {SUBSCRIPTION_STATUS_LABEL[subscription.status]}
+            </span>
+            {subscription.current_period_end && (
+              <span className="billing-renewal">
+                {subscription.cancel_at_period_end ? 'Cancela em' : 'Renova em'}{' '}
+                {new Date(subscription.current_period_end).toLocaleDateString('pt-BR', {
+                  timeZone: BUSINESS_TIME_ZONE,
+                })}
+              </span>
+            )}
+          </>
+        ) : (
+          <span>Nenhum plano do Controle do Chefe contratado — acesso liberado diretamente (conta legada ou em teste).</span>
+        )}
+        {subscription && (
+          <button className="small-action" type="button" onClick={onManageBilling}>
+            <CreditCard size={15} />
+            Gerenciar assinatura
+          </button>
+        )}
       </div>
 
       <form className="add-user-form" onSubmit={submitNewUser}>
-        <div className="section-title compact">Novo usuário</div>
+        <div className="section-title compact">
+          <UserPlus size={13} />
+          Novo usuário
+        </div>
         <div className="user-form-grid">
           <label>
-            Nome
+            <span className="field-label-text">
+              <User size={13} />
+              Nome
+            </span>
             <input
               autoComplete="name"
               value={newUser.fullName}
@@ -83,7 +150,10 @@ export function AccessTab({
             />
           </label>
           <label>
-            E-mail
+            <span className="field-label-text">
+              <Mail size={13} />
+              E-mail
+            </span>
             <input
               autoComplete="email"
               required
@@ -93,7 +163,10 @@ export function AccessTab({
             />
           </label>
           <label>
-            Senha
+            <span className="field-label-text">
+              <Lock size={13} />
+              Senha
+            </span>
             <input
               autoComplete="new-password"
               minLength={8}
@@ -104,14 +177,15 @@ export function AccessTab({
             />
           </label>
           <label>
-            Nível
-            <select value={newUser.role} onChange={(event) => setNewUser({ ...newUser, role: event.target.value as Role })}>
-              {roles.map((role) => (
-                <option key={role} value={role}>
-                  {roleLabel(role)}
-                </option>
-              ))}
-            </select>
+            <span className="field-label-text">
+              <Shield size={13} />
+              Nível
+            </span>
+            <Select
+              onChange={(value) => setNewUser({ ...newUser, role: value })}
+              options={roleOptions}
+              value={newUser.role}
+            />
           </label>
         </div>
         <button className="small-action" type="submit" disabled={creating}>
@@ -121,13 +195,18 @@ export function AccessTab({
       </form>
 
       <section className="responsibles-panel">
-        <div className="section-title compact">Responsáveis da produção</div>
+        <div className="section-title compact">
+          <Users size={13} />
+          Responsáveis da produção
+        </div>
         <form className="responsible-form" onSubmit={submitResponsible}>
-          <input
-            placeholder="Nome do responsável"
-            value={newResponsible}
-            onChange={(event) => setNewResponsible(event.target.value)}
-          />
+          <label>
+            <span className="field-label-text">
+              <User size={13} />
+              Nome do responsável
+            </span>
+            <input value={newResponsible} onChange={(event) => setNewResponsible(event.target.value)} />
+          </label>
           <button className="small-action" type="submit" disabled={creatingResponsible}>
             <Plus size={15} />
             {creatingResponsible ? 'Cadastrando...' : 'Cadastrar'}
@@ -151,6 +230,10 @@ export function AccessTab({
         </div>
       </section>
 
+      <div className="section-title">
+        <Users size={13} />
+        Usuários
+      </div>
       <section className="table-shell">
         <table>
           <thead>
@@ -168,17 +251,12 @@ export function AccessTab({
                 <td>{profile.full_name || '-'}</td>
                 <td>{profile.email}</td>
                 <td>
-                  <select
+                  <Select
                     disabled={profile.id === currentUserId}
-                    onChange={(event) => onUpdateRole(profile.id, event.target.value as Role)}
+                    onChange={(value) => onUpdateRole(profile.id, value)}
+                    options={roleOptions}
                     value={profile.role}
-                  >
-                    {roles.map((role) => (
-                      <option key={role} value={role}>
-                        {roleLabel(role)}
-                      </option>
-                    ))}
-                  </select>
+                  />
                 </td>
                 <td>
                   <div className="row-actions">

@@ -1,35 +1,56 @@
 import { type FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
 import {
   AlertTriangle,
-  Bell,
+  BarChart3,
+  Box,
+  ChevronRight,
   ClipboardList,
+  DollarSign,
+  FileText,
+  History,
+  Layers,
+  LayoutDashboard,
   LogOut,
+  Moon,
   Plus,
   RefreshCw,
   Shield,
+  Sun,
+  TrendingDown,
+  TrendingUp,
   Users,
+  Weight,
 } from 'lucide-react'
 import { FunctionsHttpError, type Session } from '@supabase/supabase-js'
 import './App.css'
 import { supabase, isSupabaseConfigured } from './lib/supabase'
 import type {
+  Account,
   AppSetting,
   Batch,
   BatchEditLog,
   BatchForm,
+  MovementType,
   NewUserForm,
+  PlanSlug,
   Profile,
   Protein,
+  Recipe,
+  RecipeForm,
+  RecipeItem,
   ResponsibleOption,
   Role,
+  StockCategory,
+  StockLevel,
+  StockMovement,
+  StockUnit,
+  Subscription,
 } from './types'
 import {
   BUSINESS_TIME_ZONE,
   averageYield,
   buildAlerts,
   fmtKg,
-  fmtPct,
-  isSameDay,
   startOfMetricWindow,
   weightedYield,
 } from './lib/metrics'
@@ -43,18 +64,29 @@ import {
   canViewTargets,
   roleLabel,
 } from './lib/permissions'
+import { accountHasAccess } from './lib/billing'
+import { isWithinRange, periodPhrase, usePeriodFilter } from './lib/period'
 import { useNow } from './hooks/useNow'
+import { type Theme, useTheme } from './hooks/useTheme'
 import { AuthPanel, SetupRequired, Splash } from './components/AuthViews'
+import { LandingPage } from './components/LandingPage'
+import { PaywallScreen } from './components/BillingViews'
 import { AccessTab } from './components/AccessTab'
 import { AlertsTab } from './components/AlertsTab'
-import { BatchHistoryModal, BatchModal, Metric, ProductionTab } from './components/ProductionViews'
+import { CustosTab } from './components/CustosTab'
+import { DashboardTab, HeroStatCard } from './components/DashboardTab'
+import { PeriodFilterBar } from './components/PeriodFilter'
+import { ProfileTab } from './components/ProfileTab'
+import { RecipeModal, RecipesTab } from './components/RecipesTab'
+import { StockTab } from './components/StockTab'
+import { BatchHistoryModal, BatchHistoryTab, BatchModal, Metric, ProductionTab } from './components/ProductionViews'
 
-type Tab = 'producao' | 'alertas' | 'acessos'
+type Tab = 'dashboard' | 'producao' | 'historico' | 'custos' | 'fichas' | 'estoque' | 'alertas' | 'acessos' | 'perfil'
 
 const emptyBatchForm: BatchForm = {
   proteinId: '',
-  grossKg: '',
-  netKg: '',
+  grossQty: '',
+  netQty: '',
   shift: 'manha',
   responsible: '',
   notes: '',
@@ -71,6 +103,8 @@ function App() {
   const [session, setSession] = useState<Session | null>(null)
   const [booting, setBooting] = useState(isSupabaseConfigured)
   const [authMessage, setAuthMessage] = useState('')
+  const [showLogin, setShowLogin] = useState(false)
+  const { theme, toggleTheme } = useTheme()
 
   useEffect(() => {
     if (!supabase) {
@@ -95,24 +129,42 @@ function App() {
 
   if (!isSupabaseConfigured) return <SetupRequired />
   if (booting) return <Splash text="Carregando sessão..." />
-  if (!session) return <AuthPanel initialMessage={authMessage} />
+  if (!session) {
+    return showLogin ? (
+      <AuthPanel initialMessage={authMessage} onBack={() => setShowLogin(false)} />
+    ) : (
+      <LandingPage onEnter={() => setShowLogin(true)} />
+    )
+  }
 
-  return <Workspace session={session} />
+  return <Workspace session={session} theme={theme} onToggleTheme={toggleTheme} />
 }
 
-function Workspace({ session }: { session: Session }) {
+function Workspace({
+  session,
+  theme,
+  onToggleTheme,
+}: {
+  session: Session
+  theme: Theme
+  onToggleTheme: () => void
+}) {
   const [profile, setProfile] = useState<Profile | null>(null)
+  const [account, setAccount] = useState<Account | null>(null)
+  const [subscription, setSubscription] = useState<Subscription | null>(null)
+  const [checkingOutPlan, setCheckingOutPlan] = useState<PlanSlug | null>(null)
+  const [billingError, setBillingError] = useState('')
   const [profiles, setProfiles] = useState<Profile[]>([])
   const [responsibleOptions, setResponsibleOptions] = useState<ResponsibleOption[]>([])
   const [proteins, setProteins] = useState<Protein[]>([])
   const [batches, setBatches] = useState<Batch[]>([])
   const [metricBatches, setMetricBatches] = useState<Batch[]>([])
+  const [trendBatches, setTrendBatches] = useState<Batch[]>([])
   const [latestBatches, setLatestBatches] = useState<Batch[]>([])
-  const [hasMoreBatches, setHasMoreBatches] = useState(false)
-  const [loadingMoreBatches, setLoadingMoreBatches] = useState(false)
   const [threshold, setThreshold] = useState(1)
   const [yieldWindowDays, setYieldWindowDays] = useState(30)
-  const [tab, setTab] = useState<Tab>('producao')
+  const [tab, setTab] = useState<Tab>('dashboard')
+  const dashboardPeriod = usePeriodFilter('today')
   const [batchForm, setBatchForm] = useState<BatchForm>(emptyBatchForm)
   const [modalOpen, setModalOpen] = useState(false)
   const [editingBatch, setEditingBatch] = useState<Batch | null>(null)
@@ -120,8 +172,33 @@ function Workspace({ session }: { session: Session }) {
   const [historyBatch, setHistoryBatch] = useState<Batch | null>(null)
   const [batchEditLogs, setBatchEditLogs] = useState<BatchEditLog[]>([])
   const [loadingBatchEditLogs, setLoadingBatchEditLogs] = useState(false)
-  const [newProtein, setNewProtein] = useState({ name: '', cost: '', target: '80' })
-  const [status, setStatus] = useState('')
+  const [recipes, setRecipes] = useState<Recipe[]>([])
+  const [recipeItems, setRecipeItems] = useState<RecipeItem[]>([])
+  const [recipeModalOpen, setRecipeModalOpen] = useState(false)
+  const [editingRecipe, setEditingRecipe] = useState<Recipe | null>(null)
+  const [stockLevels, setStockLevels] = useState<StockLevel[]>([])
+  const [stockMovements, setStockMovements] = useState<StockMovement[]>([])
+  const [status, setStatusState] = useState(() => {
+    const checkoutStatus = new URLSearchParams(window.location.search).get('checkout')
+    if (checkoutStatus === 'success') {
+      return 'Pagamento confirmado! Pode levar alguns segundos para liberar o acesso — atualize a página se necessário.'
+    }
+    if (checkoutStatus === 'cancel') {
+      return 'Checkout cancelado. Você pode tentar novamente quando quiser.'
+    }
+    return ''
+  })
+  const [statusTone, setStatusTone] = useState<'error' | 'success'>(() =>
+    new URLSearchParams(window.location.search).get('checkout') === 'success' ? 'success' : 'error',
+  )
+  const setStatus = (message: string) => {
+    setStatusTone('error')
+    setStatusState(message)
+  }
+  const setStatusOk = (message: string) => {
+    setStatusTone('success')
+    setStatusState(message)
+  }
   const [loading, setLoading] = useState(true)
 
   const loadWorkspace = useCallback(async () => {
@@ -148,7 +225,24 @@ function Workspace({ session }: { session: Session }) {
 
     setProfile(nextProfile)
     const metricWindowStart = startOfMetricWindow(yieldWindowDays).toISOString()
-    const [proteinRows, batchRows, metricBatchRows, latestBatchRows, settingRows, responsibleRows] = await Promise.all([
+    const trendWindowStart = startOfMetricWindow(400).toISOString()
+    const [
+      accountRow,
+      subscriptionRow,
+      proteinRows,
+      batchRows,
+      metricBatchRows,
+      trendBatchRows,
+      latestBatchRows,
+      settingRows,
+      responsibleRows,
+      recipeRows,
+      recipeItemRows,
+      stockLevelRows,
+      stockMovementRows,
+    ] = await Promise.all([
+      supabase.from('accounts').select('*').eq('id', nextProfile.account_id).maybeSingle(),
+      supabase.from('subscriptions').select('*').eq('account_id', nextProfile.account_id).maybeSingle(),
       supabase.from('proteins_for_current_user').select('*').order('name'),
       supabase
         .from('batches_for_current_user')
@@ -161,10 +255,23 @@ function Workspace({ session }: { session: Session }) {
         .is('voided_at', null)
         .gte('recorded_at', metricWindowStart)
         .order('recorded_at', { ascending: false }),
+      supabase
+        .from('batches_for_current_user')
+        .select('*')
+        .is('voided_at', null)
+        .gte('recorded_at', trendWindowStart)
+        .order('recorded_at', { ascending: false }),
       supabase.from('latest_batches_for_current_user').select('*'),
       supabase.from('app_settings').select('*'),
       supabase.from('production_responsibles').select('*').order('name'),
+      supabase.from('recipes_for_current_user').select('*').order('name'),
+      supabase.from('recipe_items_for_current_user').select('*'),
+      supabase.from('stock_levels_for_current_user').select('*').order('name'),
+      supabase.from('stock_movements_for_current_user').select('*').limit(200),
     ])
+
+    setAccount((accountRow.data ?? null) as Account | null)
+    setSubscription((subscriptionRow.data ?? null) as Subscription | null)
 
     const loadError = [
       proteinRows.error,
@@ -182,10 +289,24 @@ function Workspace({ session }: { session: Session }) {
     }
 
     setProteins((proteinRows.data ?? []) as Protein[])
-    setBatches((batchRows.data ?? []) as Batch[])
+    let allBatchRows = (batchRows.data ?? []) as Batch[]
+    while (allBatchRows.length > 0 && allBatchRows.length % batchPageSize === 0) {
+      const { data: moreRows, error: moreError } = await supabase
+        .from('batches_for_current_user')
+        .select('*')
+        .order('recorded_at', { ascending: false })
+        .range(allBatchRows.length, allBatchRows.length + batchPageSize - 1)
+      if (moreError || !moreRows || moreRows.length === 0) break
+      allBatchRows = [...allBatchRows, ...(moreRows as Batch[])]
+    }
+    setBatches(allBatchRows)
     setMetricBatches((metricBatchRows.data ?? []) as Batch[])
+    setTrendBatches((trendBatchRows.data ?? []) as Batch[])
     setLatestBatches((latestBatchRows.data ?? []) as Batch[])
-    setHasMoreBatches((batchRows.data?.length ?? 0) === batchPageSize)
+    setRecipes((recipeRows.data ?? []) as Recipe[])
+    setRecipeItems((recipeItemRows.data ?? []) as RecipeItem[])
+    setStockLevels((stockLevelRows.data ?? []) as StockLevel[])
+    setStockMovements((stockMovementRows.data ?? []) as StockMovement[])
 
     const settings = (settingRows.data ?? []) as AppSetting[]
     const loadedThreshold = Number(settings.find((item) => item.key === 'alert_threshold')?.value ?? 1)
@@ -218,6 +339,12 @@ function Workspace({ session }: { session: Session }) {
     }
   }, [loadWorkspace])
 
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).has('checkout')) {
+      window.history.replaceState(null, '', window.location.pathname)
+    }
+  }, [])
+
   const role = profile?.role ?? 'viewer'
   const showCosts = canViewCosts(role)
   const showTargets = canViewTargets(role)
@@ -229,22 +356,44 @@ function Workspace({ session }: { session: Session }) {
   const responsibleNames = useMemo(() => buildResponsibleNames(responsibleOptions), [responsibleOptions])
   const today = useNow()
 
+  const periodBatches = useMemo(() => {
+    const range = dashboardPeriod.range
+    if (!range) return []
+    return trendBatches.filter((batch) => !batch.voided_at && isWithinRange(batch.recorded_at, range.fromMs, range.toMs))
+  }, [dashboardPeriod.range, trendBatches])
+
   const summary = useMemo(() => {
-    const todayBatches = metricBatches.filter((batch) => isSameDay(new Date(batch.recorded_at), today))
     const averages = activeProteins
-      .map((protein) => ({ protein, avg: averageYield(metricBatches, protein.id) }))
+      .map((protein) => ({ protein, avg: averageYield(periodBatches, protein.id) }))
       .filter((item): item is { protein: Protein; avg: number } => item.avg !== null)
 
-    const average = weightedYield(metricBatches)
+    const average = weightedYield(periodBatches)
     const targetAverages = averages
       .map((item) => ({ ...item, target: item.protein.target_yield }))
       .filter((item): item is { protein: Protein; avg: number; target: number } => item.target !== null)
     const above = showTargets ? targetAverages.filter((item) => item.avg >= item.target).length : 0
     const below = showTargets ? targetAverages.filter((item) => item.avg < item.target).length : 0
-    const totalNet = todayBatches.reduce((sum, batch) => sum + batch.net_kg, 0)
+    const totalNet = periodBatches.reduce((sum, batch) => sum + batch.net_qty, 0)
+    const validBatches = metricBatches.filter((batch) => !batch.voided_at)
+    const avgBatchesPerDay = validBatches.length / yieldWindowDays
+    const avgKgPerDay = validBatches.reduce((sum, batch) => sum + batch.net_qty, 0) / yieldWindowDays
+    const monitoredCount = targetAverages.length
+    const todayCost = periodBatches.reduce((sum, batch) => sum + (batch.protein_cost_snapshot ?? 0) * batch.gross_qty, 0)
+    const todayCostPerKg = totalNet > 0 ? todayCost / totalNet : null
 
-    return { todayCount: todayBatches.length, average, above, below, totalNet }
-  }, [activeProteins, metricBatches, showTargets, today])
+    return {
+      todayCount: periodBatches.length,
+      average,
+      above,
+      below,
+      totalNet,
+      avgBatchesPerDay,
+      avgKgPerDay,
+      monitoredCount,
+      todayCost,
+      todayCostPerKg,
+    }
+  }, [activeProteins, metricBatches, periodBatches, showTargets, yieldWindowDays])
 
   function openBatchModal(proteinId = '') {
     setEditingBatch(null)
@@ -259,8 +408,8 @@ function Workspace({ session }: { session: Session }) {
     setEditReason('')
     setBatchForm({
       proteinId: batch.protein_id,
-      grossKg: String(batch.gross_kg),
-      netKg: String(batch.net_kg),
+      grossQty: String(batch.gross_qty),
+      netQty: String(batch.net_qty),
       shift: batch.shift,
       responsible: batch.responsible ?? '',
       notes: batch.notes ?? '',
@@ -289,33 +438,42 @@ function Workspace({ session }: { session: Session }) {
     setLoadingBatchEditLogs(false)
   }
 
-  async function loadMoreBatchHistory() {
-    if (!supabase || loadingMoreBatches || !hasMoreBatches) return
-    setLoadingMoreBatches(true)
-    setStatus('')
-
-    const start = batches.length
-    const { data, error } = await supabase
-      .from('batches_for_current_user')
-      .select('*')
-      .order('recorded_at', { ascending: false })
-      .range(start, start + batchPageSize - 1)
-
-    if (error) {
-      setStatus(`Não foi possível carregar mais lotes: ${error.message}`)
-    } else {
-      const nextRows = (data ?? []) as Batch[]
-      setBatches((current) => [...current, ...nextRows])
-      setHasMoreBatches(nextRows.length === batchPageSize)
-    }
-
-    setLoadingMoreBatches(false)
-  }
-
   async function signOut() {
     if (!supabase) return
     const { error } = await supabase.auth.signOut()
     if (error) setStatus(error.message)
+  }
+
+  async function startCheckout(planSlug: PlanSlug) {
+    if (!supabase) return
+    setCheckingOutPlan(planSlug)
+    setBillingError('')
+
+    const { data, error } = await supabase.functions.invoke('create-checkout-session', {
+      body: { planSlug },
+    })
+
+    if (error || !data?.url) {
+      setBillingError('Não foi possível iniciar o checkout. Tente novamente em instantes.')
+      setCheckingOutPlan(null)
+      return
+    }
+
+    window.location.href = data.url as string
+  }
+
+  async function openBillingPortal() {
+    if (!supabase) return
+    setStatus('')
+
+    const { data, error } = await supabase.functions.invoke('create-billing-portal-session')
+
+    if (error || !data?.url) {
+      setStatus('Não foi possível abrir o portal de cobrança.')
+      return
+    }
+
+    window.location.href = data.url as string
   }
 
   async function saveThreshold(value: number) {
@@ -331,7 +489,7 @@ function Workspace({ session }: { session: Session }) {
     }
 
     setThreshold(value)
-    setStatus('Limite de alerta atualizado.')
+    setStatusOk('Limite de alerta atualizado.')
   }
 
   async function saveYieldWindow(value: number) {
@@ -347,10 +505,10 @@ function Workspace({ session }: { session: Session }) {
     }
 
     setYieldWindowDays(value)
-    setStatus('Janela de rendimento atualizada.')
+    setStatusOk('Janela de rendimento atualizada.')
   }
 
-  async function updateProtein(id: string, patch: Partial<Pick<Protein, 'cost' | 'target_yield' | 'active'>>) {
+  async function updateProtein(id: string, patch: Partial<Pick<Protein, 'cost' | 'target_yield' | 'active' | 'min_stock_kg'>>) {
     if (!supabase || !canManageProteins(role)) return
     const nextCost = patch.cost
     const nextTarget = patch.target_yield
@@ -377,35 +535,6 @@ function Workspace({ session }: { session: Session }) {
     await loadWorkspace()
   }
 
-  async function createProtein(event: FormEvent) {
-    event.preventDefault()
-    if (!supabase || !canManageProteins(role)) return
-    const name = newProtein.name.trim()
-    const cost = Number(newProtein.cost)
-    const target = Number(newProtein.target)
-    if (!name || !Number.isFinite(cost) || cost <= 0 || !Number.isFinite(target) || target <= 0 || target > 100) {
-      setStatus('Informe nome, custo maior que zero e meta entre 1% e 100%.')
-      return
-    }
-
-    const slug = `${name
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/(^-|-$)/g, '')}-${Date.now()}`
-
-    const { error } = await supabase.from('proteins').insert({ slug, name, cost, target_yield: target })
-    if (error) {
-      setStatus(error.message)
-      return
-    }
-
-    setNewProtein({ name: '', cost: '', target: '80' })
-    setStatus('Proteína cadastrada com sucesso.')
-    await loadWorkspace()
-  }
-
   async function toggleProtein(protein: Protein) {
     if (!supabase || !canManageProteins(role)) return
     const action = protein.active ? 'desativar' : 'reativar'
@@ -415,7 +544,7 @@ function Workspace({ session }: { session: Session }) {
       setStatus(error.message)
       return
     }
-    setStatus(`Proteína ${protein.active ? 'desativada' : 'reativada'} sem alterar o histórico.`)
+    setStatusOk(`Proteína ${protein.active ? 'desativada' : 'reativada'} sem alterar o histórico.`)
     await loadWorkspace()
   }
 
@@ -423,8 +552,8 @@ function Workspace({ session }: { session: Session }) {
     event.preventDefault()
     if (!supabase || !canCreateBatch(role)) return
     const protein = proteins.find((item) => item.id === batchForm.proteinId)
-    const gross = Number(batchForm.grossKg)
-    const net = Number(batchForm.netKg)
+    const gross = Number(batchForm.grossQty)
+    const net = Number(batchForm.netQty)
     if (
       !protein ||
       !protein.active ||
@@ -450,8 +579,8 @@ function Workspace({ session }: { session: Session }) {
 
     const payload: Record<string, unknown> = {
       protein_id: protein.id,
-      gross_kg: gross,
-      net_kg: net,
+      gross_qty: gross,
+      net_qty: net,
       shift: batchForm.shift,
       responsible: batchForm.responsible.trim() || null,
       notes: batchForm.notes.trim() || null,
@@ -465,7 +594,7 @@ function Workspace({ session }: { session: Session }) {
     }
 
     setModalOpen(false)
-    setStatus('Produção registrada com custo e rendimento congelados no histórico.')
+    setStatusOk('Produção registrada com custo e rendimento congelados no histórico.')
     await loadWorkspace()
   }
 
@@ -474,8 +603,8 @@ function Workspace({ session }: { session: Session }) {
     if (!supabase || !editingBatch || !canEditBatch(role)) return
 
     const protein = proteins.find((item) => item.id === batchForm.proteinId)
-    const gross = Number(batchForm.grossKg)
-    const net = Number(batchForm.netKg)
+    const gross = Number(batchForm.grossQty)
+    const net = Number(batchForm.netQty)
     if (
       !protein ||
       (!protein.active && protein.id !== editingBatch.protein_id) ||
@@ -507,8 +636,8 @@ function Workspace({ session }: { session: Session }) {
 
     const { error } = await supabase.rpc('edit_batch', {
       p_batch_id: editingBatch.id,
-      p_gross_kg: gross,
-      p_net_kg: net,
+      p_gross_qty: gross,
+      p_net_qty: net,
       p_notes: batchForm.notes.trim() || null,
       p_protein_id: protein.id,
       p_reason: reason,
@@ -524,7 +653,7 @@ function Workspace({ session }: { session: Session }) {
     setModalOpen(false)
     setEditingBatch(null)
     setEditReason('')
-    setStatus('Lançamento atualizado e alteração registrada no log.')
+    setStatusOk('Lançamento atualizado e alteração registrada no log.')
     await loadWorkspace()
   }
 
@@ -543,7 +672,7 @@ function Workspace({ session }: { session: Session }) {
       setStatus(error.message)
       return
     }
-    setStatus('Lote anulado. O registro foi preservado no histórico.')
+    setStatusOk('Lote anulado. O registro foi preservado no histórico.')
     await loadWorkspace()
   }
 
@@ -572,7 +701,7 @@ function Workspace({ session }: { session: Session }) {
       return
     }
 
-    setStatus(`Usuário ${action === 'habilitar' ? 'habilitado' : 'bloqueado'} com sucesso.`)
+    setStatusOk(`Usuário ${action === 'habilitar' ? 'habilitado' : 'bloqueado'} com sucesso.`)
     await loadWorkspace()
   }
 
@@ -599,7 +728,7 @@ function Workspace({ session }: { session: Session }) {
       return false
     }
 
-    setStatus('Responsável cadastrado com sucesso.')
+    setStatusOk('Responsável cadastrado com sucesso.')
     await loadWorkspace()
     return true
   }
@@ -614,7 +743,7 @@ function Workspace({ session }: { session: Session }) {
       return
     }
 
-    setStatus('Responsável descadastrado com sucesso.')
+    setStatusOk('Responsável descadastrado com sucesso.')
     await loadWorkspace()
   }
 
@@ -653,7 +782,139 @@ function Workspace({ session }: { session: Session }) {
       return false
     }
 
-    setStatus('Usuário cadastrado com sucesso.')
+    setStatusOk('Usuário cadastrado com sucesso.')
+    await loadWorkspace()
+    return true
+  }
+
+  function openRecipeModal(recipe: Recipe | null) {
+    setEditingRecipe(recipe)
+    setRecipeModalOpen(true)
+  }
+
+  function closeRecipeModal() {
+    setEditingRecipe(null)
+    setRecipeModalOpen(false)
+  }
+
+  async function submitRecipe(form: RecipeForm) {
+    if (!supabase || !canViewCosts(role)) return
+    const name = form.name.trim()
+    const targetMarkup = Number(form.targetMarkup)
+    if (!name || !Number.isFinite(targetMarkup) || targetMarkup <= 0 || form.items.length === 0) {
+      setStatus('Informe nome, markup válido e ao menos um ingrediente.')
+      return
+    }
+
+    const recipePayload = { name, target_markup: targetMarkup, notes: form.notes.trim() || null }
+    let recipeId = editingRecipe?.id
+
+    if (editingRecipe) {
+      const { error } = await supabase.from('recipes').update(recipePayload).eq('id', editingRecipe.id)
+      if (error) {
+        setStatus(error.message)
+        return
+      }
+      const { error: deleteError } = await supabase.from('recipe_items').delete().eq('recipe_id', editingRecipe.id)
+      if (deleteError) {
+        setStatus(deleteError.message)
+        return
+      }
+    } else {
+      const { data, error } = await supabase.from('recipes').insert(recipePayload).select('id').single()
+      if (error || !data) {
+        setStatus(error?.message ?? 'Não foi possível criar a ficha técnica.')
+        return
+      }
+      recipeId = data.id as string
+    }
+
+    const itemsPayload = form.items
+      .filter((item) => item.proteinId && Number(item.quantity) > 0)
+      .map((item) => ({ recipe_id: recipeId, protein_id: item.proteinId, quantity: Number(item.quantity) }))
+
+    const { error: itemsError } = await supabase.from('recipe_items').insert(itemsPayload)
+    if (itemsError) {
+      setStatus(itemsError.message)
+      return
+    }
+
+    setStatusOk(editingRecipe ? 'Ficha técnica atualizada.' : 'Ficha técnica criada com sucesso.')
+    closeRecipeModal()
+    await loadWorkspace()
+  }
+
+  async function deleteRecipe(recipe: Recipe) {
+    if (!supabase || !canViewCosts(role)) return
+    if (!window.confirm(`Excluir a ficha técnica "${recipe.name}"?`)) return
+
+    const { error } = await supabase.from('recipes').delete().eq('id', recipe.id)
+    if (error) {
+      setStatus(error.message)
+      return
+    }
+    setStatusOk('Ficha técnica excluída.')
+    await loadWorkspace()
+  }
+
+  async function recordStockMovement(itemId: string, type: MovementType, quantity: number, note: string) {
+    if (!supabase || !canManageProteins(role)) return false
+
+    const { error } = await supabase.from('stock_movements').insert({
+      protein_id: itemId,
+      movement_type: type,
+      quantity,
+      note: note || null,
+    })
+
+    if (error) {
+      setStatus(error.message)
+      return false
+    }
+
+    setStatusOk('Movimento de estoque registrado.')
+    await loadWorkspace()
+    return true
+  }
+
+  async function createIngredient(
+    name: string,
+    category: StockCategory,
+    unit: StockUnit,
+    cost: number | null,
+    targetYield: number | null,
+    minStock: number | null,
+  ) {
+    if (!supabase || !canManageProteins(role)) return false
+    const cleanName = name.trim()
+    if (!cleanName) {
+      setStatus('Informe o nome do ingrediente.')
+      return false
+    }
+
+    const slug = `${cleanName
+      .normalize('NFD')
+      .replace(new RegExp('[\\u0300-\\u036f]', 'g'), '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/(^-|-$)/g, '')}-${Date.now()}`
+
+    const { error } = await supabase.from('proteins').insert({
+      slug,
+      name: cleanName,
+      category,
+      unit,
+      cost,
+      target_yield: targetYield,
+      min_stock_kg: minStock,
+    })
+
+    if (error) {
+      setStatus(error.message)
+      return false
+    }
+
+    setStatusOk('Ingrediente cadastrado.')
     await loadWorkspace()
     return true
   }
@@ -681,97 +942,362 @@ function Workspace({ session }: { session: Session }) {
     )
   }
 
+  if (!accountHasAccess(account, subscription)) {
+    return (
+      <PaywallScreen
+        accountName={account?.name ?? 'sua conta'}
+        checkingOutPlan={checkingOutPlan}
+        errorMessage={billingError}
+        onCheckout={startCheckout}
+        onSignOut={signOut}
+      />
+    )
+  }
+
+  const tabTitles: Record<Tab, string> = {
+    dashboard: 'Dashboard',
+    producao: 'Rendimentos',
+    historico: 'Histórico de lotes',
+    custos: 'Financeiro',
+    fichas: 'Fichas técnicas',
+    estoque: 'Estoque',
+    alertas: 'Relatórios',
+    acessos: 'Acessos',
+    perfil: 'Minha conta',
+  }
+
+  const lowStockCount = stockLevels.filter((level) => level.status === 'low' || level.status === 'out').length
+  const stockValue = stockLevels.reduce((sum, level) => {
+    const protein = proteins.find((item) => item.id === level.item_id)
+    return sum + (protein?.cost ? protein.cost * level.on_hand : 0)
+  }, 0)
+
+  const stalledAlertsCount = alerts.filter((alert) => !alert.title.includes('abaixo da meta')).length
+  const belowTargetAlertsCount = alerts.length - stalledAlertsCount
+  const alertsSubtitleParts: string[] = []
+  if (stalledAlertsCount > 0) alertsSubtitleParts.push(`${stalledAlertsCount} parada${stalledAlertsCount === 1 ? '' : 's'}`)
+  if (belowTargetAlertsCount > 0) alertsSubtitleParts.push(`${belowTargetAlertsCount} abaixo da meta`)
+  const alertsSubtitle = alertsSubtitleParts.length > 0 ? alertsSubtitleParts.join(' · ') : 'Tudo em dia'
+
+  const lowStockNames = stockLevels
+    .filter((level) => level.status === 'low' || level.status === 'out')
+    .map((level) => level.name)
+  const stockSubtitle =
+    lowStockNames.length === 0
+      ? 'Estoque em dia'
+      : lowStockNames.length <= 2
+        ? lowStockNames.join(', ')
+        : `${lowStockNames.slice(0, 2).join(', ')} +${lowStockNames.length - 2}`
+
+  const avgRecipeMarkup =
+    recipes.length > 0 ? recipes.reduce((sum, recipe) => sum + recipe.target_markup, 0) / recipes.length : null
+  const recipesSubtitle = avgRecipeMarkup !== null ? `Markup médio ${avgRecipeMarkup.toFixed(1)}x` : 'Cadastre a primeira ficha'
+
   return (
     <div className="app-shell">
-      <header className="topbar">
-        <div className="brand">
+      <aside className="sidebar">
+        <div className="sidebar-brand">
           <div className="logo-mark">MP</div>
           <div>
-            <div className="logo-main">Mana Poke</div>
+            <div className="logo-main">{account?.name ?? 'Mana Poke'}</div>
             <div className="logo-sub">Controle de rendimento</div>
           </div>
         </div>
-        <div className="topbar-actions">
-          <span className="date-label">
-            {today.toLocaleDateString('pt-BR', {
-              weekday: 'long',
-              day: '2-digit',
-              month: 'long',
-              year: 'numeric',
-              timeZone: BUSINESS_TIME_ZONE,
-            })}
-          </span>
-          <span className="role-chip">
-            <Shield size={14} />
-            {roleLabel(role)}
-          </span>
-          {canCreateBatch(role) && (
-            <button className="new-batch-btn" type="button" onClick={() => openBatchModal()}>
-              <Plus size={18} />
-              Nova produção
+
+        <nav className="sidebar-nav">
+          <div className="sidebar-section-label">Visão geral</div>
+          <button className={tab === 'dashboard' ? 'active' : ''} type="button" onClick={() => setTab('dashboard')}>
+            <LayoutDashboard size={17} />
+            Dashboard
+          </button>
+
+          <div className="sidebar-section-label">Operação</div>
+          <button className={tab === 'producao' ? 'active' : ''} type="button" onClick={() => setTab('producao')}>
+            <ClipboardList size={17} />
+            Rendimentos
+          </button>
+          {showCosts && (
+            <button className={tab === 'fichas' ? 'active' : ''} type="button" onClick={() => setTab('fichas')}>
+              <FileText size={17} />
+              Fichas técnicas
             </button>
           )}
-          <button className="icon-btn ghost" type="button" onClick={signOut} title="Sair">
-            <LogOut size={18} />
+          <button className={tab === 'estoque' ? 'active' : ''} type="button" onClick={() => setTab('estoque')}>
+            <Box size={17} />
+            Estoque
           </button>
+
+          <div className="sidebar-section-label">Análise</div>
+          <button className={tab === 'historico' ? 'active' : ''} type="button" onClick={() => setTab('historico')}>
+            <History size={17} />
+            Histórico de lotes
+          </button>
+          {showCosts && (
+            <button className={tab === 'custos' ? 'active' : ''} type="button" onClick={() => setTab('custos')}>
+              <DollarSign size={17} />
+              Financeiro
+            </button>
+          )}
+          <button className={tab === 'alertas' ? 'active' : ''} type="button" onClick={() => setTab('alertas')}>
+            <BarChart3 size={17} />
+            Relatórios
+            <span className={`alert-badge ${alerts.length === 0 ? 'zero' : ''}`}>{alerts.length}</span>
+          </button>
+
+          {canManageUsers(role) && (
+            <>
+              <div className="sidebar-section-label">Gestão</div>
+              <button className={tab === 'acessos' ? 'active' : ''} type="button" onClick={() => setTab('acessos')}>
+                <Users size={17} />
+                Acessos
+              </button>
+            </>
+          )}
+        </nav>
+
+        <div className="sidebar-footer">
+          <button className="role-chip" type="button" onClick={() => setTab('perfil')}>
+            <Shield size={14} />
+            {roleLabel(role)}
+          </button>
+          <div className="sidebar-footer-actions">
+            <button
+              className="icon-btn ghost"
+              type="button"
+              onClick={onToggleTheme}
+              title={theme === 'dark' ? 'Ativar modo claro' : 'Ativar modo escuro'}
+            >
+              {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
+            </button>
+            <button className="icon-btn ghost" type="button" onClick={() => void signOut()} title="Sair">
+              <LogOut size={16} />
+            </button>
+          </div>
         </div>
-      </header>
+      </aside>
 
-      <section className="summary-strip">
-        <Metric label="Lotes hoje" value={String(summary.todayCount)} tone="accent" />
-        <Metric label={`Rend. ponderado (${yieldWindowDays}d)`} value={fmtPct(summary.average)} />
-        {showTargets && <Metric label="Acima da meta" value={String(summary.above)} tone="ok" />}
-        {showTargets && <Metric label="Abaixo da meta" value={String(summary.below)} tone="warn" />}
-        <Metric label="Kg produzidos hoje" value={fmtKg(summary.totalNet)} tone="accent" />
-      </section>
+      <div className="main-column">
+        <header className="content-header">
+          <div>
+            <h1>{tabTitles[tab]}</h1>
+            <span className="date-label">
+              {today.toLocaleDateString('pt-BR', {
+                weekday: 'long',
+                day: '2-digit',
+                month: 'long',
+                year: 'numeric',
+                timeZone: BUSINESS_TIME_ZONE,
+              })}
+              <span className="live-badge">
+                <span className="live-dot" />
+                ao vivo
+              </span>
+            </span>
+          </div>
+          <div className="content-header-actions">
+            {tab === 'dashboard' && (
+              <PeriodFilterBar
+                customFrom={dashboardPeriod.customFrom}
+                customTo={dashboardPeriod.customTo}
+                periodMode={dashboardPeriod.periodMode}
+                setCustomFrom={dashboardPeriod.setCustomFrom}
+                setCustomTo={dashboardPeriod.setCustomTo}
+                setPeriodMode={dashboardPeriod.setPeriodMode}
+              />
+            )}
+            {(tab === 'dashboard' || tab === 'producao') && canCreateBatch(role) && (
+              <button className="new-batch-btn" type="button" onClick={() => openBatchModal()}>
+                <Plus size={18} />
+                Nova produção
+              </button>
+            )}
+          </div>
+        </header>
 
-      <nav className="tab-nav">
-        <button className={tab === 'producao' ? 'active' : ''} type="button" onClick={() => setTab('producao')}>
-          <ClipboardList size={17} />
-          Produção
-        </button>
-        <button className={tab === 'alertas' ? 'active' : ''} type="button" onClick={() => setTab('alertas')}>
-          <Bell size={17} />
-          Alertas e visão geral
-          <span className={`alert-badge ${alerts.length === 0 ? 'zero' : ''}`}>{alerts.length}</span>
-        </button>
-        {canManageUsers(role) && (
-          <button className={tab === 'acessos' ? 'active' : ''} type="button" onClick={() => setTab('acessos')}>
-            <Users size={17} />
-            Acessos
-          </button>
+        {tab === 'dashboard' && (
+          <section className="hero-stats">
+            <HeroStatCard
+              periodMode={dashboardPeriod.periodMode}
+              proteins={proteins}
+              range={dashboardPeriod.range}
+              showCosts={showCosts}
+              showTargets={showTargets}
+              stockValue={stockValue}
+              todayCost={summary.todayCost}
+              todayCostPerKg={summary.todayCostPerKg}
+              todayCount={summary.todayCount}
+              totalNet={summary.totalNet}
+              trendBatches={trendBatches}
+              weightedAverage={summary.average}
+            />
+            <div className="hero-stats-secondary">
+              <Metric
+                icon={Layers}
+                iconMotion="stack"
+                label={`Lotes ${periodPhrase(dashboardPeriod.periodMode)}`}
+                sub={`Média de ${summary.avgBatchesPerDay.toFixed(1)}/dia`}
+                tone="accent"
+                value={String(summary.todayCount)}
+              />
+              {showTargets && (
+                <Metric
+                  icon={TrendingUp}
+                  iconMotion="rise"
+                  label="Acima da meta"
+                  sub={summary.monitoredCount > 0 ? `${Math.round((summary.above / summary.monitoredCount) * 100)}% das proteínas` : undefined}
+                  tone="ok"
+                  value={String(summary.above)}
+                />
+              )}
+              {showTargets && (
+                <Metric
+                  icon={TrendingDown}
+                  iconMotion="fall"
+                  label="Abaixo da meta"
+                  sub={summary.monitoredCount > 0 ? `${Math.round((summary.below / summary.monitoredCount) * 100)}% das proteínas` : undefined}
+                  tone="warn"
+                  value={String(summary.below)}
+                />
+              )}
+              <Metric
+                icon={Weight}
+                iconMotion="balance"
+                label={`Kg produzidos ${periodPhrase(dashboardPeriod.periodMode)}`}
+                sub={`Média de ${fmtKg(summary.avgKgPerDay)}/dia`}
+                tone="accent"
+                value={fmtKg(summary.totalNet)}
+              />
+            </div>
+          </section>
         )}
-      </nav>
 
-      {status && (
-        <div aria-live="polite" className="status-banner" role="status">
-          {status}
-        </div>
-      )}
+        {status && (
+          <div aria-live="polite" className={`status-banner ${statusTone}`} role="status">
+            {status}
+          </div>
+        )}
 
-      <main className="main">
+        <main className="main">
+        {tab === 'dashboard' && (
+          <>
+            <div className="dashboard-teasers">
+              <button
+                className={`teaser-card${alerts.length > 0 ? ' danger' : ' ok'}`}
+                type="button"
+                onClick={() => setTab('alertas')}
+              >
+                <div className="teaser-card-main">
+                  <span className="teaser-label">Alertas ativos</span>
+                  <strong className={alerts.length > 0 ? 'warn' : 'ok'}>{alerts.length}</strong>
+                  <small className="teaser-sub">{alertsSubtitle}</small>
+                </div>
+                <div className="teaser-card-visual">
+                  <span className={`teaser-icon warn motion-alert${alerts.length > 0 ? ' active' : ''}`}>
+                    <AlertTriangle size={26} />
+                    {alerts.length > 0 && <span className="teaser-icon-dot" />}
+                  </span>
+                  <ChevronRight className="teaser-arrow" size={14} />
+                </div>
+              </button>
+              <button
+                className={`teaser-card${lowStockCount > 0 ? ' danger' : ' ok'}`}
+                type="button"
+                onClick={() => setTab('estoque')}
+              >
+                <div className="teaser-card-main">
+                  <span className="teaser-label">Abaixo do mínimo</span>
+                  <strong className={lowStockCount > 0 ? 'warn' : 'ok'}>{lowStockCount}</strong>
+                  <small className="teaser-sub">{stockSubtitle}</small>
+                </div>
+                <div className="teaser-card-visual">
+                  <span className={`teaser-icon motion-box ${lowStockCount > 0 ? 'warn active' : 'ok'}`}>
+                    <Box size={26} />
+                    {lowStockCount > 0 && <span className="teaser-icon-dot" />}
+                  </span>
+                  <ChevronRight className="teaser-arrow" size={14} />
+                </div>
+              </button>
+              {showCosts && (
+                <button className="teaser-card" type="button" onClick={() => setTab('fichas')}>
+                  <div className="teaser-card-main">
+                    <span className="teaser-label">Fichas técnicas</span>
+                    <strong>{recipes.length}</strong>
+                    <small className="teaser-sub">{recipesSubtitle}</small>
+                  </div>
+                  <div className="teaser-card-visual">
+                    <span className="teaser-icon accent motion-doc">
+                      <FileText size={26} />
+                    </span>
+                    <ChevronRight className="teaser-arrow" size={14} />
+                  </div>
+                </button>
+              )}
+            </div>
+            <DashboardTab
+              periodBatches={periodBatches}
+              proteins={proteins}
+              range={dashboardPeriod.range}
+              showTargets={showTargets}
+              trendBatches={trendBatches}
+            />
+          </>
+        )}
+
         {tab === 'producao' && (
           <ProductionTab
             activeProteins={activeProteins}
             canCreate={canCreateBatch(role)}
             canEdit={canManageProteins(role)}
-            canEditBatch={canEditBatch(role)}
-            canVoid={canVoidBatch(role)}
-            hasMoreBatches={hasMoreBatches}
-            historyBatches={batches}
             latestBatches={latestBatches}
-            loadingMoreBatches={loadingMoreBatches}
             metricBatches={metricBatches}
-            onLoadMoreBatches={loadMoreBatchHistory}
-            onEditBatch={openEditBatch}
             onOpenBatch={openBatchModal}
-            onShowBatchHistory={showBatchHistory}
-            onVoidBatch={voidBatch}
             onUpdateProtein={updateProtein}
-            proteinCatalog={proteins}
             showCosts={showCosts}
             showTargets={showTargets}
             yieldWindowDays={yieldWindowDays}
+          />
+        )}
+
+        {tab === 'historico' && (
+          <BatchHistoryTab
+            canEditBatch={canEditBatch(role)}
+            canVoid={canVoidBatch(role)}
+            historyBatches={batches}
+            onEditBatch={openEditBatch}
+            onShowBatchHistory={showBatchHistory}
+            onVoidBatch={voidBatch}
+            proteinCatalog={proteins}
+            showCosts={showCosts}
+            showTargets={showTargets}
+          />
+        )}
+
+        {tab === 'custos' && showCosts && (
+          <CustosTab proteins={proteins} recipes={recipes} stockLevels={stockLevels} trendBatches={trendBatches} />
+        )}
+
+        {tab === 'fichas' && showCosts && (
+          <RecipesTab
+            activeProteins={activeProteins}
+            canManage={showCosts}
+            metricBatches={metricBatches}
+            onCreateRecipe={submitRecipe}
+            onDeleteRecipe={deleteRecipe}
+            onOpenRecipeModal={openRecipeModal}
+            recipeItems={recipeItems}
+            recipes={recipes}
+          />
+        )}
+
+        {tab === 'estoque' && (
+          <StockTab
+            canManage={canManageProteins(role)}
+            movements={stockMovements}
+            onCreateItem={createIngredient}
+            onRecordMovement={recordStockMovement}
+            onUpdateProtein={updateProtein}
+            proteins={proteins}
+            stockLevels={stockLevels}
           />
         )}
 
@@ -782,10 +1308,7 @@ function Workspace({ session }: { session: Session }) {
             canEdit={canManageProteins(role)}
             latestBatches={latestBatches}
             metricBatches={metricBatches}
-            newProtein={newProtein}
-            onCreateProtein={createProtein}
             onOpenBatch={openBatchModal}
-            onSetNewProtein={setNewProtein}
             onThresholdChange={saveThreshold}
             onToggleProtein={toggleProtein}
             onUpdateProtein={updateProtein}
@@ -804,13 +1327,28 @@ function Workspace({ session }: { session: Session }) {
             onCreateResponsible={createResponsible}
             onCreateUser={createUser}
             onDeleteResponsible={deleteResponsible}
+            onManageBilling={openBillingPortal}
             onToggleUser={toggleUser}
             onUpdateRole={updateRole}
             profiles={profiles}
             responsibleOptions={responsibleOptions}
+            subscription={subscription}
           />
         )}
-      </main>
+
+        {tab === 'perfil' && (
+          <ProfileTab
+            account={account}
+            billingError={billingError}
+            checkingOutPlan={checkingOutPlan}
+            onCheckout={startCheckout}
+            onManageBilling={openBillingPortal}
+            profile={profile}
+            subscription={subscription}
+          />
+        )}
+        </main>
+      </div>
 
       {modalOpen && (
         <BatchModal
@@ -839,6 +1377,17 @@ function Workspace({ session }: { session: Session }) {
           logs={batchEditLogs}
           onClose={() => setHistoryBatch(null)}
           proteins={proteins}
+        />
+      )}
+
+      {recipeModalOpen && (
+        <RecipeModal
+          activeProteins={activeProteins}
+          editingItems={editingRecipe ? recipeItems.filter((item) => item.recipe_id === editingRecipe.id) : []}
+          editingRecipe={editingRecipe}
+          metricBatches={metricBatches}
+          onClose={closeRecipeModal}
+          onSubmit={submitRecipe}
         />
       )}
     </div>

@@ -1,29 +1,66 @@
-@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Nunito:wght@700;800;900&family=Nunito+Sans:wght@400;500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700;800;900&family=Geist+Mono:wght@400;500;600;700&display=swap');
+
+:root,
+:root[data-theme='light'] {
+  --teal: #d6431a;
+  --teal-mid: #e85f3c;
+  --teal-light: #d6431a;
+  --teal-dim: #fbe7e0;
+  --coral: #d6431a;
+  --coral-mid: #e85f3c;
+  --coral-dim: #fbe7e0;
+  --lime: #4f8f30;
+  --lime-dim: #e9f5e1;
+  --amber: #b8790a;
+  --amber-dim: #faf0dc;
+  --danger: #c8383d;
+  --danger-dim: #fbe5e5;
+  --bg: #f7f1e8;
+  --surface: #ffffff;
+  --card: #faf5ec;
+  --border: #e7dbc9;
+  --border2: #d6c4ac;
+  --text: #2a1810;
+  --muted: #83705f;
+  --glass: rgba(255, 255, 255, 0.6);
+  --glass-border: rgba(255, 255, 255, 0.9);
+  --glow-1: rgba(214, 67, 26, 0.22);
+  --glow-2: rgba(184, 121, 10, 0.18);
+  --glow-3: rgba(79, 143, 48, 0.12);
+}
+
+:root[data-theme='dark'] {
+  --teal: #ff5836;
+  --teal-mid: #ff7a5c;
+  --teal-light: #ff5836;
+  --teal-dim: rgba(255, 88, 54, 0.12);
+  --coral: #ff5836;
+  --coral-mid: #ff7a5c;
+  --coral-dim: rgba(255, 88, 54, 0.14);
+  --lime: #7ed957;
+  --lime-dim: rgba(126, 217, 87, 0.14);
+  --amber: #ffb43d;
+  --amber-dim: rgba(255, 180, 61, 0.14);
+  --danger: #ff6b6b;
+  --danger-dim: rgba(255, 107, 107, 0.14);
+  --bg: #140b08;
+  --surface: #22140d;
+  --card: #2a1911;
+  --border: rgba(255, 220, 190, 0.09);
+  --border2: rgba(255, 220, 190, 0.22);
+  --text: #fbf3ea;
+  --muted: #a8917d;
+  --glass: rgba(42, 25, 17, 0.55);
+  --glass-border: rgba(255, 220, 190, 0.16);
+  --glow-1: rgba(255, 88, 54, 0.3);
+  --glow-2: rgba(255, 180, 61, 0.2);
+  --glow-3: rgba(126, 217, 87, 0.1);
+}
 
 :root {
-  --teal: #1b4547;
-  --teal-mid: #2a6366;
-  --teal-light: #3d8287;
-  --teal-dim: #e6f0f0;
-  --coral: #e05535;
-  --coral-mid: #f07050;
-  --coral-dim: #fdf0ec;
-  --lime: #82b820;
-  --lime-dim: #f0f8e4;
-  --amber: #c07800;
-  --amber-dim: #fef7e6;
-  --danger: #c82020;
-  --danger-dim: #fdeeed;
-  --bg: #f5f2eb;
-  --surface: #ffffff;
-  --card: #fafaf6;
-  --border: #e2ddd5;
-  --border2: #c9c3b8;
-  --text: #192a2b;
-  --muted: #718689;
-  --sans: 'Nunito Sans', system-ui, sans-serif;
-  --heading: 'Nunito', system-ui, sans-serif;
-  --mono: 'IBM Plex Mono', ui-monospace, Consolas, monospace;
+  --sans: 'Geist', system-ui, sans-serif;
+  --heading: 'Geist', system-ui, sans-serif;
+  --mono: 'Geist Mono', ui-monospace, Consolas, monospace;
   color: var(--text);
   background: var(--bg);
   font-family: var(--sans);
@@ -39,12 +76,20 @@
 
 html {
   background: var(--bg);
+  transition: background-color 0.2s ease;
 }
 
 body {
   min-width: 320px;
   min-height: 100vh;
   margin: 0;
+  background-image:
+    radial-gradient(1200px 700px at 100% -12%, var(--glow-1), transparent 60%),
+    radial-gradient(900px 800px at -12% 108%, var(--glow-2), transparent 55%),
+    radial-gradient(800px 600px at 60% 40%, var(--glow-3), transparent 65%);
+  background-repeat: no-repeat;
+  background-attachment: fixed;
+  transition: background-color 0.2s ease, color 0.2s ease;
 }
 
 button,
