@@ -71,13 +71,15 @@ Deno.serve(async (request) => {
 
   const { data: callerProfile, error: profileLookupError } = await adminClient
     .from('profiles')
-    .select('role, enabled')
+    .select('role, enabled, account_id')
     .eq('id', caller.id)
     .single()
 
   if (profileLookupError || callerProfile?.role !== 'admin' || !callerProfile.enabled) {
     return jsonResponse({ error: 'Somente administradores podem criar usuários.' }, 403)
   }
+
+  const accountId = callerProfile.account_id as string
 
   let body: CreateUserBody
   try {
@@ -107,7 +109,7 @@ Deno.serve(async (request) => {
     email,
     email_confirm: true,
     password,
-    user_metadata: { full_name: fullName || null },
+    user_metadata: { full_name: fullName || null, account_id: accountId, role },
   })
 
   if (createError || !created.user) {
@@ -116,7 +118,7 @@ Deno.serve(async (request) => {
 
   const { error: profileUpdateError } = await adminClient
     .from('profiles')
-    .update({ enabled: true, full_name: fullName || null, role })
+    .update({ enabled: true, full_name: fullName || null, role, account_id: accountId })
     .eq('id', created.user.id)
     .select('id')
     .single()
