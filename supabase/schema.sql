@@ -773,6 +773,10 @@ with check (
 );
 
 drop policy if exists "proteins_delete_managers" on public.proteins;
+create policy "proteins_delete_managers"
+on public.proteins for delete
+to authenticated
+using (public.current_user_role() in ('admin', 'gestor') and account_id = public.current_user_account_id());
 
 drop policy if exists "batches_select_authenticated" on public.batches;
 create policy "batches_select_authenticated"
@@ -887,6 +891,12 @@ with check (
   and account_id = public.current_user_account_id()
   and public.account_has_access(account_id)
 );
+
+drop policy if exists "stock_movements_delete_managers" on public.stock_movements;
+create policy "stock_movements_delete_managers"
+on public.stock_movements for delete
+to authenticated
+using (public.current_user_role() in ('admin', 'gestor') and account_id = public.current_user_account_id());
 
 create or replace view public.proteins_for_current_user
 with (security_barrier = true)
@@ -1095,7 +1105,8 @@ grant select on public.profiles to authenticated;
 
 grant select (id, slug, name, category, unit, active, created_at, min_stock_kg) on public.proteins to authenticated;
 grant insert (slug, name, category, unit, cost, target_yield, min_stock_kg) on public.proteins to authenticated;
-grant update (cost, target_yield, active, category, unit, min_stock_kg) on public.proteins to authenticated;
+grant update (name, cost, target_yield, active, category, unit, min_stock_kg) on public.proteins to authenticated;
+grant delete on public.proteins to authenticated;
 
 grant select (
   id,
@@ -1140,6 +1151,7 @@ grant delete on public.recipe_items to authenticated;
 
 grant select (id, protein_id, movement_type, quantity, note, created_at) on public.stock_movements to authenticated;
 grant insert (protein_id, movement_type, quantity, note) on public.stock_movements to authenticated;
+grant delete on public.stock_movements to authenticated;
 
 grant select on public.recipes_for_current_user to authenticated;
 grant select on public.recipe_items_for_current_user to authenticated;

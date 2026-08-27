@@ -6,27 +6,25 @@ import {
   ArrowUp,
   Boxes,
   CheckCircle2,
-  DollarSign,
   History,
   Inbox,
   LayoutGrid,
   MessageSquare,
   Package,
-  Percent,
   Plus,
   RefreshCw,
   Search,
   Table2,
+  Trash2,
   Wallet,
   Weight,
-  Wheat,
   X,
   XCircle,
   type LucideIcon,
 } from 'lucide-react'
 import { categoryMeta, categoryOrder, resolveCategoryMeta } from '../lib/categories'
 import { BUSINESS_TIME_ZONE, businessDateKey, fmtBRL, fmtQty } from '../lib/metrics'
-import type { MovementType, Protein, StockCategory, StockLevel, StockMovement, StockUnit } from '../types'
+import type { MovementType, Protein, StockCategory, StockLevel, StockMovement } from '../types'
 import { Metric } from './ProductionViews'
 import { Select } from './Select'
 
@@ -75,19 +73,6 @@ const stockStatusClass: Record<StockLevel['status'], string> = {
   out: 'danger',
   sem_meta: 'virgin',
 }
-
-const newItemCategoryOptions: { value: StockCategory; label: string }[] = categoryOrder.map((category) => ({
-  value: category,
-  label: categoryMeta[category].label,
-}))
-
-const unitOptions: { value: StockUnit; label: string }[] = [
-  { value: 'kg', label: 'kg' },
-  { value: 'g', label: 'g' },
-  { value: 'l', label: 'L' },
-  { value: 'ml', label: 'mL' },
-  { value: 'un', label: 'un' },
-]
 
 const viewOptions: { value: StockView; icon: LucideIcon; label: string }[] = [
   { value: 'overview', icon: LayoutGrid, label: 'Visão geral' },
@@ -420,7 +405,7 @@ function CategoryFilterChips({
 export function StockTab({
   canManage,
   movements,
-  onCreateItem,
+  onDeleteMovement,
   onRecordMovement,
   onUpdateProtein,
   proteins,
@@ -428,14 +413,7 @@ export function StockTab({
 }: {
   canManage: boolean
   movements: StockMovement[]
-  onCreateItem: (
-    name: string,
-    category: StockCategory,
-    unit: StockUnit,
-    cost: number | null,
-    targetYield: number | null,
-    minStock: number | null,
-  ) => Promise<boolean>
+  onDeleteMovement: (id: string) => Promise<boolean>
   onRecordMovement: (itemId: string, type: MovementType, quantity: number, note: string) => Promise<boolean>
   onUpdateProtein: (id: string, patch: Partial<Pick<Protein, 'min_stock_kg'>>) => void
   proteins: Protein[]
@@ -448,17 +426,6 @@ export function StockTab({
   const [showMovementForm, setShowMovementForm] = useState(false)
   const [movementForm, setMovementForm] = useState({ itemId: '', type: 'entrada' as MovementType, quantity: '', note: '' })
   const [savingMovement, setSavingMovement] = useState(false)
-
-  const [showItemForm, setShowItemForm] = useState(false)
-  const [itemForm, setItemForm] = useState({
-    category: 'hortifruti' as StockCategory,
-    cost: '',
-    minStock: '',
-    name: '',
-    targetYield: '',
-    unit: 'kg' as StockUnit,
-  })
-  const [savingItem, setSavingItem] = useState(false)
 
   const itemOptions = [
     { label: 'Selecione', value: '' },
@@ -498,55 +465,33 @@ export function StockTab({
     setSavingMovement(false)
   }
 
-  async function submitItem(event: FormEvent) {
-    event.preventDefault()
-    if (!itemForm.name.trim()) return
-
-    setSavingItem(true)
-    const cost = itemForm.cost ? Number(itemForm.cost) : null
-    const targetYield = itemForm.targetYield ? Number(itemForm.targetYield) : null
-    const minStock = itemForm.minStock ? Number(itemForm.minStock) : null
-    const ok = await onCreateItem(itemForm.name, itemForm.category, itemForm.unit, cost, targetYield, minStock)
-    if (ok) {
-      setItemForm({ category: 'hortifruti', cost: '', minStock: '', name: '', targetYield: '', unit: 'kg' })
-      setShowItemForm(false)
-    }
-    setSavingItem(false)
-  }
-
   return (
     <>
       <div className="section-header-row">
-        <div className="section-title">
-          <Boxes size={13} />
-          Estoque
+        <div className="stock-toolbar-filters">
+          <div className="chart-period-filter">
+            {viewOptions.map((option) => (
+              <button
+                className={view === option.value ? 'active' : ''}
+                key={option.value}
+                onClick={() => setView(option.value)}
+                type="button"
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+          {view === 'overview' && (
+            <CategoryFilterChips categoryFilter={categoryFilter} presentCategories={presentCategories} setCategoryFilter={setCategoryFilter} />
+          )}
         </div>
-        <div className="chart-period-filter">
-          {viewOptions.map((option) => (
-            <button
-              className={view === option.value ? 'active' : ''}
-              key={option.value}
-              onClick={() => setView(option.value)}
-              type="button"
-            >
-              {option.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {canManage && (
-        <div className="stock-action-bar stacked-section">
+        {canManage && (
           <button className="secondary-btn" onClick={() => setShowMovementForm((value) => !value)} type="button">
             <ArrowLeftRight size={15} />
             {showMovementForm ? 'Fechar' : 'Registrar movimento'}
           </button>
-          <button className="secondary-btn" onClick={() => setShowItemForm((value) => !value)} type="button">
-            <Plus size={15} />
-            {showItemForm ? 'Fechar' : 'Cadastrar ingrediente'}
-          </button>
-        </div>
-      )}
+        )}
+      </div>
 
       {canManage && showMovementForm && (
         <form className="stock-movement-form stacked-section" onSubmit={submitMovement}>
@@ -600,96 +545,8 @@ export function StockTab({
         </form>
       )}
 
-      {canManage && showItemForm && (
-        <form className="stock-movement-form ingredient-form stacked-section" onSubmit={submitItem}>
-          <label>
-            <span className="field-label-text">
-              <Boxes size={13} />
-              Nome do ingrediente
-            </span>
-            <input
-              onChange={(event) => setItemForm({ ...itemForm, name: event.target.value })}
-              placeholder="Ex.: Alface americana"
-              required
-              value={itemForm.name}
-            />
-          </label>
-          <label>
-            <span className="field-label-text">
-              <Wheat size={13} />
-              Categoria
-            </span>
-            <Select
-              onChange={(value) => setItemForm({ ...itemForm, category: value as StockCategory })}
-              options={newItemCategoryOptions}
-              value={itemForm.category}
-            />
-          </label>
-          <label>
-            <span className="field-label-text">
-              <Weight size={13} />
-              Unidade
-            </span>
-            <Select
-              onChange={(value) => setItemForm({ ...itemForm, unit: value as StockUnit })}
-              options={unitOptions}
-              value={itemForm.unit}
-            />
-          </label>
-          <label>
-            <span className="field-label-text">
-              <DollarSign size={13} />
-              Custo
-            </span>
-            <input
-              min={0.01}
-              onChange={(event) => setItemForm({ ...itemForm, cost: event.target.value })}
-              placeholder="Opcional"
-              step="0.01"
-              type="number"
-              value={itemForm.cost}
-            />
-          </label>
-          <label>
-            <span className="field-label-text">
-              <Percent size={13} />
-              Meta de rendimento
-            </span>
-            <input
-              max={100}
-              min={1}
-              onChange={(event) => setItemForm({ ...itemForm, targetYield: event.target.value })}
-              placeholder="Opcional"
-              type="number"
-              value={itemForm.targetYield}
-            />
-          </label>
-          <label>
-            <span className="field-label-text">
-              <AlertTriangle size={13} />
-              Estoque mínimo
-            </span>
-            <input
-              min={0}
-              onChange={(event) => setItemForm({ ...itemForm, minStock: event.target.value })}
-              placeholder="Opcional"
-              step="0.001"
-              type="number"
-              value={itemForm.minStock}
-            />
-          </label>
-          <button className="small-action" disabled={savingItem} type="submit">
-            <Plus size={15} />
-            {savingItem ? 'Salvando...' : 'Cadastrar'}
-          </button>
-        </form>
-      )}
-
       {view === 'overview' && (
         <>
-          <div className="section-header-row">
-            <CategoryFilterChips categoryFilter={categoryFilter} presentCategories={presentCategories} setCategoryFilter={setCategoryFilter} />
-          </div>
           {searchedLevels.length === 0 ? (
             <div className="empty-state stacked-section">
               <span className="empty-state-icon">
@@ -820,12 +677,13 @@ export function StockTab({
               <th>Tipo</th>
               <th>Quantidade</th>
               <th>Observação</th>
+              {canManage && <th>Ações</th>}
             </tr>
           </thead>
           <tbody>
             {movements.length === 0 && (
               <tr>
-                <td className="empty-state" colSpan={5}>
+                <td className="empty-state" colSpan={canManage ? 6 : 5}>
                   <span className="empty-state-icon">
                     <Inbox size={16} />
                     Nenhum movimento registrado ainda.
@@ -852,6 +710,24 @@ export function StockTab({
                     </span>
                   </td>
                   <td>{movement.note || '-'}</td>
+                  {canManage && (
+                    <td>
+                      <div className="row-actions">
+                        <button
+                          className="icon-btn danger"
+                          onClick={() => {
+                            if (window.confirm('Excluir esse movimento? O saldo em estoque será recalculado.')) {
+                              void onDeleteMovement(movement.id)
+                            }
+                          }}
+                          title="Excluir"
+                          type="button"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    </td>
+                  )}
                 </tr>
               )
             })}

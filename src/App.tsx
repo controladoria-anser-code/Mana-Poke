@@ -78,10 +78,11 @@ import { DashboardTab, HeroStatCard } from './components/DashboardTab'
 import { PeriodFilterBar } from './components/PeriodFilter'
 import { ProfileTab } from './components/ProfileTab'
 import { RecipeModal, RecipesTab } from './components/RecipesTab'
+import { CadastroTab } from './components/CadastroTab'
 import { StockTab } from './components/StockTab'
 import { BatchHistoryModal, BatchHistoryTab, BatchModal, Metric, ProductionTab } from './components/ProductionViews'
 
-type Tab = 'dashboard' | 'producao' | 'historico' | 'custos' | 'fichas' | 'estoque' | 'alertas' | 'acessos' | 'perfil'
+type Tab = 'dashboard' | 'cadastro' | 'producao' | 'historico' | 'custos' | 'fichas' | 'estoque' | 'alertas' | 'acessos' | 'perfil'
 
 const emptyBatchForm: BatchForm = {
   proteinId: '',
@@ -629,7 +630,10 @@ function Workspace({
     setStatusOk('Janela de rendimento atualizada.')
   }
 
-  async function updateProtein(id: string, patch: Partial<Pick<Protein, 'cost' | 'target_yield' | 'active' | 'min_stock_kg'>>) {
+  async function updateProtein(
+    id: string,
+    patch: Partial<Pick<Protein, 'name' | 'category' | 'unit' | 'cost' | 'target_yield' | 'active' | 'min_stock_kg'>>,
+  ) {
     if (!supabase || !canManageProteins(role)) return
     const nextCost = patch.cost
     const nextTarget = patch.target_yield
@@ -644,6 +648,10 @@ function Workspace({
       setStatus('A meta deve estar entre 1% e 100%.')
       return
     }
+    if (patch.name !== undefined && !patch.name.trim()) {
+      setStatus('Informe o nome do ingrediente.')
+      return
+    }
 
     const client = supabase
     setStatus('')
@@ -654,6 +662,22 @@ function Workspace({
     }
 
     await loadWorkspace()
+  }
+
+  async function deleteProtein(id: string) {
+    if (!supabase || !canManageProteins(role)) return false
+    const { error } = await supabase.from('proteins').delete().eq('id', id)
+    if (error) {
+      const message =
+        error.code === '23503'
+          ? 'Não é possível excluir: esse ingrediente já tem lotes, movimentações ou fichas técnicas registrados. Desative-o em vez de excluir.'
+          : error.message
+      setStatus(message)
+      return false
+    }
+    setStatusOk('Ingrediente excluído.')
+    await loadWorkspace()
+    return true
   }
 
   async function toggleProtein(protein: Protein) {
@@ -998,6 +1022,18 @@ function Workspace({
     return true
   }
 
+  async function deleteStockMovement(id: string) {
+    if (!supabase || !canManageProteins(role)) return false
+    const { error } = await supabase.from('stock_movements').delete().eq('id', id)
+    if (error) {
+      setStatus(error.message)
+      return false
+    }
+    setStatusOk('Movimento excluído.')
+    await loadWorkspace()
+    return true
+  }
+
   async function createIngredient(
     name: string,
     category: StockCategory,
@@ -1077,6 +1113,7 @@ function Workspace({
 
   const tabTitles: Record<Tab, string> = {
     dashboard: 'Dashboard',
+    cadastro: 'Cadastro de produtos',
     producao: 'Rendimentos',
     historico: 'Histórico de lotes',
     custos: 'Financeiro',
@@ -1133,17 +1170,23 @@ function Workspace({
           </button>
 
           <div className="sidebar-section-label">Operação</div>
-          <button className={tab === 'producao' ? 'active' : ''} type="button" onClick={() => setTab('producao')}>
-            <ClipboardList size={17} />
-            Rendimentos
-          </button>
+          {canManageProteins(role) && (
+            <button className={tab === 'cadastro' ? 'active' : ''} type="button" onClick={() => setTab('cadastro')}>
+              <ClipboardList size={17} />
+              Cadastro de produtos
+            </button>
+          )}
           {showCosts && (
             <button className={tab === 'fichas' ? 'active' : ''} type="button" onClick={() => setTab('fichas')}>
               <FileText size={17} />
               Fichas técnicas
             </button>
           )}
-          <button className={tab === 'estoque' ? 'active' : ''} type="button" onClick={() => setTab('estoque')}>
+          <button
+            className={tab === 'estoque' || tab === 'producao' ? 'active' : ''}
+            type="button"
+            onClick={() => setTab('estoque')}
+          >
             <Box size={17} />
             Estoque
           </button>
@@ -1225,6 +1268,16 @@ function Workspace({
                 setCustomTo={dashboardPeriod.setCustomTo}
                 setPeriodMode={dashboardPeriod.setPeriodMode}
               />
+            )}
+            {(tab === 'estoque' || tab === 'producao') && (
+              <div className="chart-period-filter">
+                <button className={tab === 'estoque' ? 'active' : ''} onClick={() => setTab('estoque')} type="button">
+                  Estoque
+                </button>
+                <button className={tab === 'producao' ? 'active' : ''} onClick={() => setTab('producao')} type="button">
+                  Rendimento
+                </button>
+              </div>
             )}
             {(tab === 'dashboard' || tab === 'producao') && canCreateBatch(role) && (
               <button className="new-batch-btn" type="button" onClick={() => openBatchModal()}>
@@ -1410,11 +1463,21 @@ function Workspace({
           />
         )}
 
+        {tab === 'cadastro' && (
+          <CadastroTab
+            canManage={canManageProteins(role)}
+            onCreateItem={createIngredient}
+            onDeleteItem={deleteProtein}
+            onUpdateProtein={updateProtein}
+            proteins={proteins}
+          />
+        )}
+
         {tab === 'estoque' && (
           <StockTab
             canManage={canManageProteins(role)}
             movements={stockMovements}
-            onCreateItem={createIngredient}
+            onDeleteMovement={deleteStockMovement}
             onRecordMovement={recordStockMovement}
             onUpdateProtein={updateProtein}
             proteins={proteins}
