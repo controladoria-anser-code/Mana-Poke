@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react'
+import type { PlanSlug } from '../types'
 
 const landingStyles = `
   .landing-root {
@@ -258,7 +259,13 @@ function trackPointer(event: React.MouseEvent<HTMLDivElement>) {
   event.currentTarget.style.setProperty('--mx', `${event.nativeEvent.offsetX}px`)
 }
 
-export function LandingPage({ onEnter }: { onEnter: () => void }) {
+export function LandingPage({
+  onEnter,
+  onSelectPlan,
+}: {
+  onEnter: () => void
+  onSelectPlan: (plan: PlanSlug) => void
+}) {
   const rootRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -305,6 +312,13 @@ export function LandingPage({ onEnter }: { onEnter: () => void }) {
   function handleEnterClick(event: React.MouseEvent<HTMLAnchorElement>) {
     event.preventDefault()
     onEnter()
+  }
+
+  function handleSelectPlanClick(plan: PlanSlug) {
+    return (event: React.MouseEvent<HTMLAnchorElement>) => {
+      event.preventDefault()
+      onSelectPlan(plan)
+    }
   }
 
   return (
@@ -517,7 +531,7 @@ export function LandingPage({ onEnter }: { onEnter: () => void }) {
                 <li>1 usuário</li>
                 <li>Relatórios de rendimento</li>
               </ul>
-              <a href="#" className="btn btn-ghost" onClick={handleEnterClick}>Começar agora</a>
+              <a href="#" className="btn btn-ghost" onClick={handleSelectPlanClick('chefe-controle')}>Começar agora</a>
             </div>
             <div className="plan featured reveal">
               <div className="badge">Mais escolhido</div>
@@ -534,7 +548,7 @@ export function LandingPage({ onEnter }: { onEnter: () => void }) {
                 <li>Insumos ilimitados e até 5 usuários</li>
                 <li>Suporte por e-mail e WhatsApp</li>
               </ul>
-              <a href="#" className="btn btn-primary" onClick={handleEnterClick}>Testar 7 dias grátis <span className="arr">→</span></a>
+              <a href="#" className="btn btn-primary" onClick={handleSelectPlanClick('chefe-cozinha')}>Testar 7 dias grátis <span className="arr">→</span></a>
             </div>
             <div className="plan reveal">
               <div className="plan-name">Chefe Executivo</div>

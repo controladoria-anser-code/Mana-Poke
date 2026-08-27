@@ -136,6 +136,7 @@ function App() {
   const [booting, setBooting] = useState(isSupabaseConfigured)
   const [authMessage, setAuthMessage] = useState('')
   const [showLogin, setShowLogin] = useState(false)
+  const [pendingPlan, setPendingPlan] = useState<PlanSlug | null>(null)
   const { theme, toggleTheme } = useTheme()
 
   useEffect(() => {
@@ -165,18 +166,36 @@ function App() {
     return showLogin ? (
       <AuthPanel initialMessage={authMessage} onBack={() => setShowLogin(false)} />
     ) : (
-      <LandingPage onEnter={() => setShowLogin(true)} />
+      <LandingPage
+        onEnter={() => setShowLogin(true)}
+        onSelectPlan={(plan) => {
+          setPendingPlan(plan)
+          setShowLogin(true)
+        }}
+      />
     )
   }
 
-  return <Workspace session={session} theme={theme} onToggleTheme={toggleTheme} />
+  return (
+    <Workspace
+      onToggleTheme={toggleTheme}
+      onConsumePendingPlan={() => setPendingPlan(null)}
+      pendingPlan={pendingPlan}
+      session={session}
+      theme={theme}
+    />
+  )
 }
 
 function Workspace({
+  onConsumePendingPlan,
+  pendingPlan,
   session,
   theme,
   onToggleTheme,
 }: {
+  onConsumePendingPlan: () => void
+  pendingPlan: PlanSlug | null
   session: Session
   theme: Theme
   onToggleTheme: () => void
@@ -432,6 +451,13 @@ function Workspace({
   }, [])
 
   const role = profile?.role ?? 'viewer'
+
+  useEffect(() => {
+    if (pendingPlan === null || loading || !profile || role !== 'admin' || subscription) return
+    onConsumePendingPlan()
+    void startCheckout(pendingPlan)
+  }, [loading, onConsumePendingPlan, pendingPlan, profile, role, subscription])
+
   const showCosts = canViewCosts(role)
   const showTargets = canViewTargets(role)
   const activeProteins = useMemo(() => proteins.filter((protein) => protein.active), [proteins])
