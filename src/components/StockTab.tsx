@@ -687,7 +687,9 @@ export function StockTab({
 
       {view === 'overview' && (
         <>
-          <CategoryFilterChips categoryFilter={categoryFilter} presentCategories={presentCategories} setCategoryFilter={setCategoryFilter} />
+          <div className="section-header-row">
+            <CategoryFilterChips categoryFilter={categoryFilter} presentCategories={presentCategories} setCategoryFilter={setCategoryFilter} />
+          </div>
           {searchedLevels.length === 0 ? (
             <div className="empty-state stacked-section">
               <span className="empty-state-icon">
