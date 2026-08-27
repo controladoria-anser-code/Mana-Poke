@@ -68,7 +68,7 @@ import { accountHasAccess } from './lib/billing'
 import { isWithinRange, periodPhrase, usePeriodFilter } from './lib/period'
 import { useNow } from './hooks/useNow'
 import { type Theme, useTheme } from './hooks/useTheme'
-import { AuthPanel, SetupRequired, Splash } from './components/AuthViews'
+import { AuthPanel, type AuthMode, SetupRequired, Splash } from './components/AuthViews'
 import { LandingPage } from './components/LandingPage'
 import { PaywallScreen } from './components/BillingViews'
 import { AccessTab } from './components/AccessTab'
@@ -136,6 +136,7 @@ function App() {
   const [booting, setBooting] = useState(isSupabaseConfigured)
   const [authMessage, setAuthMessage] = useState('')
   const [showLogin, setShowLogin] = useState(false)
+  const [authMode, setAuthMode] = useState<AuthMode>('signin')
   const [pendingPlan, setPendingPlan] = useState<PlanSlug | null>(null)
   const { theme, toggleTheme } = useTheme()
 
@@ -164,12 +165,20 @@ function App() {
   if (booting) return <Splash text="Carregando sessão..." />
   if (!session) {
     return showLogin ? (
-      <AuthPanel initialMessage={authMessage} onBack={() => setShowLogin(false)} />
+      <AuthPanel initialMessage={authMessage} initialMode={authMode} onBack={() => setShowLogin(false)} />
     ) : (
       <LandingPage
-        onEnter={() => setShowLogin(true)}
+        onEnter={() => {
+          setAuthMode('signin')
+          setShowLogin(true)
+        }}
         onSelectPlan={(plan) => {
           setPendingPlan(plan)
+          setAuthMode('signup')
+          setShowLogin(true)
+        }}
+        onStartSignup={() => {
+          setAuthMode('signup')
           setShowLogin(true)
         }}
       />

@@ -262,9 +262,11 @@ function trackPointer(event: React.MouseEvent<HTMLDivElement>) {
 export function LandingPage({
   onEnter,
   onSelectPlan,
+  onStartSignup,
 }: {
   onEnter: () => void
   onSelectPlan: (plan: PlanSlug) => void
+  onStartSignup: () => void
 }) {
   const rootRef = useRef<HTMLDivElement>(null)
 
@@ -314,6 +316,11 @@ export function LandingPage({
     onEnter()
   }
 
+  function handleStartSignupClick(event: React.MouseEvent<HTMLAnchorElement>) {
+    event.preventDefault()
+    onStartSignup()
+  }
+
   function handleSelectPlanClick(plan: PlanSlug) {
     return (event: React.MouseEvent<HTMLAnchorElement>) => {
       event.preventDefault()
@@ -340,7 +347,7 @@ export function LandingPage({
           </div>
           <div className="nav-cta">
             <a href="#" className="login" onClick={handleEnterClick}>Entrar</a>
-            <a href="#" className="btn btn-primary" onClick={handleEnterClick}>Começar grátis <span className="arr">→</span></a>
+            <a href="#" className="btn btn-primary" onClick={handleStartSignupClick}>Começar grátis <span className="arr">→</span></a>
           </div>
         </div>
       </nav>
@@ -351,7 +358,7 @@ export function LandingPage({
           <h1 className="reveal">Cada corte vira <span className="grad serif">margem</span>, não desperdício.</h1>
           <p className="lead reveal">A plataforma que pesa, calcula e precifica por você. Do salmão inteiro ao prato no cardápio, saiba exatamente quanto rende, quanto custa e quanto lucra.</p>
           <div className="hero-cta reveal">
-            <a href="#" className="btn btn-primary" onClick={handleEnterClick}>Começar grátis <span className="arr">→</span></a>
+            <a href="#" className="btn btn-primary" onClick={handleStartSignupClick}>Começar grátis <span className="arr">→</span></a>
             <a href="#como" className="btn btn-ghost">Ver a plataforma</a>
           </div>
           <div className="hero-sub reveal">
@@ -577,7 +584,7 @@ export function LandingPage({
             <h2>O próximo corte pode fechar a conta <span className="serif">a seu favor</span>.</h2>
             <p>Descubra em minutos quanto sua cozinha ganha, ou perde, em cada peça que passa pela faca.</p>
             <div className="hero-cta">
-              <a href="#" className="btn btn-primary" onClick={handleEnterClick}>Começar grátis <span className="arr">→</span></a>
+              <a href="#" className="btn btn-primary" onClick={handleStartSignupClick}>Começar grátis <span className="arr">→</span></a>
               <a href="#planos" className="btn btn-ghost">Ver planos</a>
             </div>
           </div>

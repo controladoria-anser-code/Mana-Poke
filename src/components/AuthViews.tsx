@@ -179,17 +179,19 @@ const logoMark = (
   </svg>
 )
 
-type AuthMode = 'signin' | 'signup'
+export type AuthMode = 'signin' | 'signup'
 
 export function AuthPanel({
   initialMessage = '',
+  initialMode = 'signin',
   onBack,
 }: {
   initialMessage?: string
+  initialMode?: AuthMode
   onBack?: () => void
 }) {
   const rootRef = useRef<HTMLDivElement>(null)
-  const [mode, setMode] = useState<AuthMode>('signin')
+  const [mode, setMode] = useState<AuthMode>(initialMode)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [fullName, setFullName] = useState('')
