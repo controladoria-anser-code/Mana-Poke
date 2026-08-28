@@ -1,18 +1,16 @@
-import { type FormEvent, type MouseEvent as ReactMouseEvent, useMemo, useState } from 'react'
+import { type FormEvent, type MouseEvent as ReactMouseEvent, useEffect, useMemo, useState } from 'react'
 import {
   AlertTriangle,
-  ArrowDown,
   ArrowLeftRight,
-  ArrowUp,
   Boxes,
   CheckCircle2,
+  Edit3,
   History,
   Inbox,
   LayoutGrid,
   MessageSquare,
   Package,
   Plus,
-  RefreshCw,
   Search,
   Table2,
   Trash2,
@@ -47,12 +45,6 @@ const movementTypeOptions: { value: MovementType; label: string }[] = [
   { value: 'saida', label: movementLabels.saida },
   { value: 'ajuste', label: movementLabels.ajuste },
 ]
-
-const movementIcons: Record<MovementType, LucideIcon> = {
-  entrada: ArrowUp,
-  saida: ArrowDown,
-  ajuste: RefreshCw,
-}
 
 const movementTone: Record<MovementType, string> = {
   entrada: 'ok',
@@ -279,6 +271,7 @@ function StockCard({
   lastMovement,
   level,
   movementCount,
+  onSelect,
   onUpdateProtein,
   protein,
 }: {
@@ -286,6 +279,7 @@ function StockCard({
   lastMovement: StockMovement | undefined
   level: StockLevel
   movementCount: number
+  onSelect: (level: StockLevel) => void
   onUpdateProtein: (id: string, patch: Partial<Pick<Protein, 'min_stock_kg'>>) => void
   protein: Protein | undefined
 }) {
@@ -295,7 +289,7 @@ function StockCard({
   const estimatedValue = protein?.cost ? protein.cost * level.on_hand : null
 
   return (
-    <article className={`protein-card ${statusClass}`} onMouseMove={handleCardSpotlight}>
+    <article className={`protein-card clickable ${statusClass}`} onClick={() => onSelect(level)} onMouseMove={handleCardSpotlight}>
       <div className="card-accent" />
       <div className="card-body">
         <div className="card-header">
@@ -357,18 +351,210 @@ function StockCard({
           </div>
         )}
 
-        <footer className="card-footer">
-          <div>
+        <footer className="card-footer stock-card-footer">
+          <div className="stock-card-footer-info">
             {estimatedValue !== null && <strong>{fmtBRL(estimatedValue)} em estoque</strong>}
-            <small>
-              {lastMovement
-                ? `Último movimento: ${new Date(lastMovement.created_at).toLocaleString('pt-BR', { timeZone: BUSINESS_TIME_ZONE })}`
-                : 'Nenhum movimento registrado ainda.'}
-            </small>
+            {!lastMovement && <small>Nenhum movimento registrado ainda.</small>}
           </div>
+          {lastMovement && (
+            <span
+              className={`stock-signal-dot ${movementTone[lastMovement.movement_type]}`}
+              title={`${movementLabels[lastMovement.movement_type]} · clique para ver detalhes`}
+            />
+          )}
         </footer>
       </div>
     </article>
+  )
+}
+
+function StockDetailModal({
+  canManage,
+  itemMovements,
+  level,
+  onClose,
+  onDeleteItem,
+  onEditItem,
+  onUpdateProtein,
+  protein,
+}: {
+  canManage: boolean
+  itemMovements: StockMovement[]
+  level: StockLevel
+  onClose: () => void
+  onDeleteItem: (id: string) => Promise<boolean>
+  onEditItem: (id: string) => void
+  onUpdateProtein: (id: string, patch: Partial<Pick<Protein, 'min_stock_kg'>>) => void
+  protein: Protein | undefined
+}) {
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    const closeOnEscape = (event: KeyboardEvent) => event.key === 'Escape' && onClose()
+    window.addEventListener('keydown', closeOnEscape)
+    return () => {
+      document.body.style.overflow = previousOverflow
+      window.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [onClose])
+
+  const statusClass = stockStatusClass[level.status]
+  const { fillPct, scaleMax, targetPct } = stockGauge(level)
+  const { icon: CategoryIcon, label: categoryLabel } = resolveCategoryMeta(level.category)
+  const estimatedValue = protein?.cost ? protein.cost * level.on_hand : null
+
+  async function handleDelete() {
+    if (!window.confirm(`Excluir "${level.name}"? Isso só funciona se ele nunca teve lote, movimentação ou ficha técnica.`)) return
+    const ok = await onDeleteItem(level.item_id)
+    if (ok) onClose()
+  }
+
+  return (
+    <div
+      aria-labelledby="stock-detail-title"
+      aria-modal="true"
+      className="overlay"
+      onMouseDown={(event) => event.target === event.currentTarget && onClose()}
+      role="dialog"
+    >
+      <section className="modal protein-detail-modal">
+        <header className="modal-header">
+          <div className="card-header-main">
+            <div className={`protein-icon ${statusClass}`}>
+              <CategoryIcon size={20} />
+            </div>
+            <div>
+              <h2 id="stock-detail-title">{level.name}</h2>
+              <span>
+                {categoryLabel} · {itemMovements.length} movimentaç{itemMovements.length === 1 ? 'ão' : 'ões'}
+              </span>
+            </div>
+          </div>
+          <div className="modal-header-actions">
+            <span className={`status-pill ${statusClass}`}>{stockStatusLabel[level.status]}</span>
+            <button className="icon-btn ghost" onClick={onClose} title="Fechar" type="button">
+              <X size={18} />
+            </button>
+          </div>
+        </header>
+
+        <div className="modal-body">
+          <div className="metrics-grid">
+            <div className="mini-metric">
+              <div className="mini-metric-top">
+                <span className="mini-metric-label">Em estoque</span>
+              </div>
+              <strong className={statusClass}>{fmtQty(level.on_hand, level.unit)}</strong>
+            </div>
+            <div className="mini-metric">
+              <div className="mini-metric-top">
+                <span className="mini-metric-label">Mínimo</span>
+              </div>
+              <strong>{level.min_stock ? fmtQty(level.min_stock, level.unit) : '-'}</strong>
+            </div>
+            {estimatedValue !== null && (
+              <div className="mini-metric">
+                <div className="mini-metric-top">
+                  <span className="mini-metric-label">Valor em estoque</span>
+                </div>
+                <strong>{fmtBRL(estimatedValue)}</strong>
+              </div>
+            )}
+          </div>
+
+          <div className="gauge large">
+            <div className="gauge-labels">
+              <span>0 {level.unit}</span>
+              {targetPct !== null && <span>Mínimo {fmtQty(level.min_stock ?? 0, level.unit)}</span>}
+              <span>{fmtQty(scaleMax, level.unit)}</span>
+            </div>
+            <div className="gauge-track">
+              <div className={`gauge-fill ${statusClass}`} style={{ width: `${fillPct}%` }} />
+              {targetPct !== null && <div className="gauge-target" style={{ left: `${targetPct}%` }} />}
+            </div>
+          </div>
+
+          {canManage && (
+            <div className="target-row">
+              <span>Estoque mínimo</span>
+              <input
+                defaultValue={level.min_stock ?? ''}
+                min={0}
+                onBlur={(event) =>
+                  onUpdateProtein(level.item_id, { min_stock_kg: event.target.value ? Number(event.target.value) : null })
+                }
+                placeholder={level.unit}
+                step="0.001"
+                type="number"
+              />
+              <span>{level.unit}</span>
+            </div>
+          )}
+
+          <div className="section-title">
+            <History size={13} />
+            Histórico de movimentos
+          </div>
+          <section className="table-shell">
+            <table>
+              <thead>
+                <tr>
+                  <th>Data</th>
+                  <th>Tipo</th>
+                  <th>Quantidade</th>
+                  <th>Observação</th>
+                </tr>
+              </thead>
+              <tbody>
+                {itemMovements.length === 0 && (
+                  <tr>
+                    <td className="empty-state" colSpan={4}>
+                      <span className="empty-state-icon">
+                        <Inbox size={16} />
+                        Nenhum movimento registrado ainda.
+                      </span>
+                    </td>
+                  </tr>
+                )}
+                {itemMovements.map((movement) => (
+                  <tr key={movement.id}>
+                    <td>{new Date(movement.created_at).toLocaleString('pt-BR', { timeZone: BUSINESS_TIME_ZONE })}</td>
+                    <td>
+                      <span className={`status-pill ${movementTone[movement.movement_type]}`}>
+                        {movementLabels[movement.movement_type]}
+                      </span>
+                    </td>
+                    <td>
+                      <span className={`rend-cell ${movement.quantity < 0 ? 'danger' : 'ok'}`}>
+                        {movement.quantity > 0 ? '+' : ''}
+                        {fmtQty(movement.quantity, movement.unit)}
+                      </span>
+                    </td>
+                    <td>{movement.note || '-'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </section>
+        </div>
+
+        <footer className="modal-footer">
+          <button className="secondary-btn" onClick={onClose} type="button">
+            Fechar
+          </button>
+          {canManage && (
+            <>
+              <button className="icon-btn" onClick={() => onEditItem(level.item_id)} title="Editar" type="button">
+                <Edit3 size={15} />
+              </button>
+              <button className="icon-btn danger" onClick={handleDelete} title="Excluir" type="button">
+                <Trash2 size={15} />
+              </button>
+            </>
+          )}
+        </footer>
+      </section>
+    </div>
   )
 }
 
@@ -405,7 +591,8 @@ function CategoryFilterChips({
 export function StockTab({
   canManage,
   movements,
-  onDeleteMovement,
+  onDeleteItem,
+  onEditItem,
   onRecordMovement,
   onUpdateProtein,
   proteins,
@@ -413,7 +600,8 @@ export function StockTab({
 }: {
   canManage: boolean
   movements: StockMovement[]
-  onDeleteMovement: (id: string) => Promise<boolean>
+  onDeleteItem: (id: string) => Promise<boolean>
+  onEditItem: (id: string) => void
   onRecordMovement: (itemId: string, type: MovementType, quantity: number, note: string) => Promise<boolean>
   onUpdateProtein: (id: string, patch: Partial<Pick<Protein, 'min_stock_kg'>>) => void
   proteins: Protein[]
@@ -422,6 +610,7 @@ export function StockTab({
   const [view, setView] = useState<StockView>('overview')
   const [categoryFilter, setCategoryFilter] = useState<StockCategory | 'all'>('all')
   const [search, setSearch] = useState('')
+  const [selectedItem, setSelectedItem] = useState<StockLevel | null>(null)
 
   const [showMovementForm, setShowMovementForm] = useState(false)
   const [movementForm, setMovementForm] = useState({ itemId: '', type: 'entrada' as MovementType, quantity: '', note: '' })
@@ -481,8 +670,19 @@ export function StockTab({
               </button>
             ))}
           </div>
-          {view === 'overview' && (
+          {view !== 'dashboard' && (
             <CategoryFilterChips categoryFilter={categoryFilter} presentCategories={presentCategories} setCategoryFilter={setCategoryFilter} />
+          )}
+          {view === 'table' && (
+            <label className="stock-search-field">
+              <Search size={14} />
+              <input onChange={(event) => setSearch(event.target.value)} placeholder="Buscar item..." value={search} />
+              {search && (
+                <button onClick={() => setSearch('')} type="button">
+                  <X size={13} />
+                </button>
+              )}
+            </label>
           )}
         </div>
         {canManage && (
@@ -565,6 +765,7 @@ export function StockTab({
                     lastMovement={itemMovements[0]}
                     level={level}
                     movementCount={itemMovements.length}
+                    onSelect={setSelectedItem}
                     onUpdateProtein={onUpdateProtein}
                     protein={proteins.find((item) => item.id === level.item_id)}
                   />
@@ -575,20 +776,21 @@ export function StockTab({
         </>
       )}
 
+      {selectedItem && (
+        <StockDetailModal
+          canManage={canManage}
+          itemMovements={movementsFor(selectedItem.item_id)}
+          level={selectedItem}
+          onClose={() => setSelectedItem(null)}
+          onDeleteItem={onDeleteItem}
+          onEditItem={onEditItem}
+          onUpdateProtein={onUpdateProtein}
+          protein={proteins.find((item) => item.id === selectedItem.item_id)}
+        />
+      )}
+
       {view === 'table' && (
         <>
-          <div className="section-header-row">
-            <CategoryFilterChips categoryFilter={categoryFilter} presentCategories={presentCategories} setCategoryFilter={setCategoryFilter} />
-            <label className="stock-search-field">
-              <Search size={14} />
-              <input onChange={(event) => setSearch(event.target.value)} placeholder="Buscar item..." value={search} />
-              {search && (
-                <button onClick={() => setSearch('')} type="button">
-                  <X size={13} />
-                </button>
-              )}
-            </label>
-          </div>
           <section className="table-shell stacked-section">
             <table>
               <thead>
@@ -598,12 +800,13 @@ export function StockTab({
                   <th>Em estoque</th>
                   <th>Mínimo</th>
                   <th>Situação</th>
+                  {canManage && <th>Ações</th>}
                 </tr>
               </thead>
               <tbody>
                 {searchedLevels.length === 0 && (
                   <tr>
-                    <td className="empty-state" colSpan={5}>
+                    <td className="empty-state" colSpan={canManage ? 6 : 5}>
                       <span className="empty-state-icon">
                         <Inbox size={16} />
                         Nenhum item encontrado.
@@ -630,6 +833,31 @@ export function StockTab({
                       <td>
                         <span className={`status-pill ${statusClass}`}>{stockStatusLabel[level.status]}</span>
                       </td>
+                      {canManage && (
+                        <td>
+                          <div className="row-actions">
+                            <button className="icon-btn" onClick={() => onEditItem(level.item_id)} title="Editar" type="button">
+                              <Edit3 size={14} />
+                            </button>
+                            <button
+                              className="icon-btn danger"
+                              onClick={() => {
+                                if (
+                                  window.confirm(
+                                    `Excluir "${level.name}"? Isso só funciona se ele nunca teve lote, movimentação ou ficha técnica.`,
+                                  )
+                                ) {
+                                  void onDeleteItem(level.item_id)
+                                }
+                              }}
+                              title="Excluir"
+                              type="button"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        </td>
+                      )}
                     </tr>
                   )
                 })}
@@ -664,76 +892,6 @@ export function StockTab({
         </>
       )}
 
-      <div className="section-title">
-        <History size={13} />
-        Últimos movimentos
-      </div>
-      <section className="table-shell">
-        <table>
-          <thead>
-            <tr>
-              <th>Data</th>
-              <th>Item</th>
-              <th>Tipo</th>
-              <th>Quantidade</th>
-              <th>Observação</th>
-              {canManage && <th>Ações</th>}
-            </tr>
-          </thead>
-          <tbody>
-            {movements.length === 0 && (
-              <tr>
-                <td className="empty-state" colSpan={canManage ? 6 : 5}>
-                  <span className="empty-state-icon">
-                    <Inbox size={16} />
-                    Nenhum movimento registrado ainda.
-                  </span>
-                </td>
-              </tr>
-            )}
-            {movements.slice(0, 30).map((movement) => {
-              const MovementIcon = movementIcons[movement.movement_type]
-              return (
-                <tr key={movement.id}>
-                  <td>{new Date(movement.created_at).toLocaleString('pt-BR', { timeZone: BUSINESS_TIME_ZONE })}</td>
-                  <td>{movement.item_name}</td>
-                  <td>
-                    <span className={`status-pill ${movementTone[movement.movement_type]}`}>
-                      <MovementIcon size={11} />
-                      {movementLabels[movement.movement_type]}
-                    </span>
-                  </td>
-                  <td>
-                    <span className={`rend-cell ${movement.quantity < 0 ? 'danger' : 'ok'}`}>
-                      {movement.quantity > 0 ? '+' : ''}
-                      {fmtQty(movement.quantity, movement.unit)}
-                    </span>
-                  </td>
-                  <td>{movement.note || '-'}</td>
-                  {canManage && (
-                    <td>
-                      <div className="row-actions">
-                        <button
-                          className="icon-btn danger"
-                          onClick={() => {
-                            if (window.confirm('Excluir esse movimento? O saldo em estoque será recalculado.')) {
-                              void onDeleteMovement(movement.id)
-                            }
-                          }}
-                          title="Excluir"
-                          type="button"
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </div>
-                    </td>
-                  )}
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
-      </section>
     </>
   )
 }

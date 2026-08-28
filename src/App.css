@@ -1520,6 +1520,8 @@ button:disabled {
 
 .protein-card {
   position: relative;
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
   background: var(--glass);
   backdrop-filter: blur(20px);
@@ -1578,6 +1580,7 @@ button:disabled {
 .proteins-grid > .protein-card:nth-child(n + 7) { animation-delay: 240ms; }
 
 .card-accent {
+  flex-shrink: 0;
   height: 5px;
   background: var(--border2);
 }
@@ -1606,6 +1609,9 @@ button:disabled {
 }
 
 .card-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
   padding: 22px 22px 20px;
 }
 
@@ -1615,6 +1621,10 @@ button:disabled {
   align-items: flex-start;
   justify-content: space-between;
   gap: 14px;
+}
+
+.card-footer {
+  margin-top: auto;
 }
 
 .card-header {
@@ -1948,6 +1958,39 @@ button:disabled {
   color: var(--text);
   font-family: var(--mono);
   font-size: 13px;
+}
+
+.stock-card-footer {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.stock-card-footer-info {
+  min-width: 0;
+  flex: 1;
+}
+
+.stock-signal-dot {
+  flex-shrink: 0;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  margin-top: 2px;
+  background: var(--muted);
+}
+
+.stock-signal-dot.ok {
+  background: var(--lime);
+}
+
+.stock-signal-dot.danger {
+  background: var(--danger);
+}
+
+.stock-signal-dot.virgin {
+  background: var(--text-faint, var(--muted));
 }
 
 .table-shell {
@@ -2597,10 +2640,17 @@ tr:last-child td {
 
 .modal-footer {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
   gap: 10px;
   padding: 16px 24px 20px;
   border-top: 1px solid var(--glass-border);
+}
+
+.modal-footer .icon-btn {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
 }
 
 .protein-chips {

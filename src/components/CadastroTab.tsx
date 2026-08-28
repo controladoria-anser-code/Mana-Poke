@@ -84,12 +84,15 @@ function CategoryFilterChips({
 
 export function CadastroTab({
   canManage,
+  onConsumeOpenEdit,
   onCreateItem,
   onDeleteItem,
   onUpdateProtein,
+  openEditId,
   proteins,
 }: {
   canManage: boolean
+  onConsumeOpenEdit: () => void
   onCreateItem: (
     name: string,
     category: StockCategory,
@@ -103,6 +106,7 @@ export function CadastroTab({
     id: string,
     patch: Partial<Pick<Protein, 'name' | 'category' | 'unit' | 'cost' | 'target_yield' | 'active' | 'min_stock_kg'>>,
   ) => void
+  openEditId: string | null
   proteins: Protein[]
 }) {
   const [showForm, setShowForm] = useState(false)
@@ -111,6 +115,18 @@ export function CadastroTab({
   const [saving, setSaving] = useState(false)
   const [categoryFilter, setCategoryFilter] = useState<StockCategory | 'all'>('all')
   const [search, setSearch] = useState('')
+  const [lastHandledEditId, setLastHandledEditId] = useState<string | null>(null)
+
+  if (openEditId && openEditId !== lastHandledEditId) {
+    setLastHandledEditId(openEditId)
+    const protein = proteins.find((item) => item.id === openEditId)
+    if (protein) {
+      setEditingId(protein.id)
+      setForm(formFromProtein(protein))
+      setShowForm(true)
+    }
+    onConsumeOpenEdit()
+  }
 
   const presentCategories = categoryOrder.filter((category) => proteins.some((protein) => protein.category === category))
   const categoryFiltered = categoryFilter === 'all' ? proteins : proteins.filter((protein) => protein.category === categoryFilter)

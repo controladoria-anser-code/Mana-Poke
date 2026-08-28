@@ -239,6 +239,7 @@ function Workspace({
   const [editingRecipe, setEditingRecipe] = useState<Recipe | null>(null)
   const [stockLevels, setStockLevels] = useState<StockLevel[]>([])
   const [stockMovements, setStockMovements] = useState<StockMovement[]>([])
+  const [editIngredientId, setEditIngredientId] = useState<string | null>(null)
   const [status, setStatusState] = useState(() => {
     const checkoutStatus = new URLSearchParams(window.location.search).get('checkout')
     if (checkoutStatus === 'success') {
@@ -1022,18 +1023,6 @@ function Workspace({
     return true
   }
 
-  async function deleteStockMovement(id: string) {
-    if (!supabase || !canManageProteins(role)) return false
-    const { error } = await supabase.from('stock_movements').delete().eq('id', id)
-    if (error) {
-      setStatus(error.message)
-      return false
-    }
-    setStatusOk('Movimento excluído.')
-    await loadWorkspace()
-    return true
-  }
-
   async function createIngredient(
     name: string,
     category: StockCategory,
@@ -1466,9 +1455,11 @@ function Workspace({
         {tab === 'cadastro' && (
           <CadastroTab
             canManage={canManageProteins(role)}
+            onConsumeOpenEdit={() => setEditIngredientId(null)}
             onCreateItem={createIngredient}
             onDeleteItem={deleteProtein}
             onUpdateProtein={updateProtein}
+            openEditId={editIngredientId}
             proteins={proteins}
           />
         )}
@@ -1477,7 +1468,11 @@ function Workspace({
           <StockTab
             canManage={canManageProteins(role)}
             movements={stockMovements}
-            onDeleteMovement={deleteStockMovement}
+            onDeleteItem={deleteProtein}
+            onEditItem={(id) => {
+              setEditIngredientId(id)
+              setTab('cadastro')
+            }}
             onRecordMovement={recordStockMovement}
             onUpdateProtein={updateProtein}
             proteins={proteins}
